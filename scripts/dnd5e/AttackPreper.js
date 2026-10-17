@@ -1,7 +1,9 @@
 import MonsterBlock5e from "./MonsterBlock5e.js";
 import Helpers from "./Helpers5e.js";
-import { debug, isDndV4OrNewer } from "../utilities.js";
+import { debug, getActivity } from "../utilities.js";
 import ItemPreper from "./ItemPreper.js";
+
+/* global dnd5e:readonly */
 
 /**
  * Prepares the data for an Attack item
@@ -12,39 +14,41 @@ import ItemPreper from "./ItemPreper.js";
  */
 export default class AttackPreper extends ItemPreper {
 	/**
+	 * Determine whether an item should be displayed as an attack.
+	 *
+	 * @static
+	 * @param {Item5e|object} item
+	 * @return {boolean}
+	 * @memberof AttackPreper
+	 */
+	static isAttack(item) {
+		const document = item.document ?? item;
+		return document.type === "weapon" || Boolean(getActivity(document, "attack"));
+	}
+
+	/**
+	 * The attack activity of this item.
+	 *
+	 * @type {Activity|undefined}
+	 * @readonly
+	 * @memberof AttackPreper
+	 */
+	get activity() {
+		if (this._activity === undefined) this._activity = getActivity(this.item, "attack") ?? null;
+		return this._activity;
+	}
+
+	/**
 	 * @override
 	 * @memberof AttackPreper
 	 */
 	prepare() {
-		this.data.tohit = this.item.labels.toHit;
+		this.data.tohit = this.activity?.labels?.toHit ?? this.item.labels?.attacks?.[0]?.toHit ?? "";
 		this.data.description = this.getDescription();
 		this.data.continuousDescription =
-			Helpers.isContinuousDescription(this.data.system.description.value);
+			Helpers.isContinuousDescription(this.item.system.description?.value ?? "");
 
 		if (debug.enabled) console.debug(this);
-	}
-
-	/**
-	 * Returns normalized attack/damage information for this attack
-	 *
-	 * @return {object}
-	 * @memberof AttackPreper
-	 */
-	get attackData() {
-		let attackData;
-		if (!isDndV4OrNewer()) {
-			attackData = this.item.system;
-		} else {
-			attackData = {...this.item.system?.activities?.find(a => a.type === "attack")};
-			attackData.damage = {
-				parts: attackData.damage.parts.map(p => [
-					p.formula,
-					p.types.first()
-				]),
-				versatile: this.item.system.damage.versatile.formula
-			};
-		}
-		return attackData;
 	}
 
 	/**
@@ -63,18 +67,15 @@ export default class AttackPreper extends ItemPreper {
 	 * @memberof AttackPreper
 	 */
 	getDescription() {
-		/** @type {WeaponData} */
-
+		const damage = this.getAllDamageData();
 		return {
 			attackType: this.getAttackType(),
 			tohit: this.formatToHit(),
 			range: this.formatRange(),
 			target: this.formatTarget(),
 			versatile: this.getVersatileData(),
-			damage: this.dealsDamage()
-				? this.getAllDamageData()
-				: []
-		}
+			damage
+		};
 	}
 
 	/**
@@ -86,14 +87,8 @@ export default class AttackPreper extends ItemPreper {
 	 * @memberof AttackPreper
 	 */
 	formatToHit() {
-		const tohit = this.item.labels.toHit || "0";
-		let bonus = `+${tohit}`                        // If nothing else changes, then it's just +toHit
-
-		if (["+", "-"].includes(tohit.charAt(0))) {    // If the value is already signed
-			bonus = tohit.charAt(1) == " "             //   If the second character is a space (after the sign)
-				? tohit.slice(0, 1) + tohit.slice(2)   //     Slice out the space
-				: tohit;                               //   Otherwise leave as it
-		}
+		const tohit = String(this.data.tohit || "0").replace(/\s+/g, "");
+		const bonus = ["+", "-"].includes(tohit.charAt(0)) ? tohit : `+${tohit}`;
 
 		return game.i18n.format("MOBLOKS5E.AttackToHit", { bonus });
 	}
@@ -107,63 +102,59 @@ export default class AttackPreper extends ItemPreper {
 	 * @memberof AttackPreper
 	 */
 	formatRange() {
-		/** @type {number|null} */
-		const longRange = this.item.system.range?.long;     // The long range increment, or null
+		const ranged = this.isRangedAttack();
+		const itemRange = this.item.system.range ?? {};
+		const activityRange = this.activity?.range ?? {};
+		const useActivity = this.item.type !== "weapon" || activityRange.override;
+
+		let range, longRange, units;
+		if (ranged) {
+			range = useActivity ? activityRange.value : itemRange.value;
+			longRange = useActivity ? null : itemRange.long;
+			units = (useActivity ? activityRange.units : itemRange.units) || "ft";
+		}
+		else {
+			range = (useActivity ? activityRange.value : (itemRange.reach || itemRange.value)) || 5;
+			units = (useActivity ? activityRange.units : itemRange.units) || "ft";
+			if (!["ft", "m", "mi", "km"].includes(units)) units = "ft";
+		}
+
 		const reachRange = game.i18n.localize(
-			this.isRangedAttack(this.item)      // If the attack is ranged
+			ranged                              // If the attack is ranged
 				? "MOBLOKS5E.range"             // Localize range, otherwise reach
 				: "MOBLOKS5E.reach"
 		);
 
 		return game.i18n.format("MOBLOKS5E.AttackRange", {
 			reachRange,
-			range: this.item.system.range?.value,
-			sep: longRange ? "/" : "",
-			max: longRange ? longRange : "",
-			units: this.item.system.range?.units
-		})
+			range: range ?? "",
+			sep: longRange && longRange != range ? "/" : "",
+			max: longRange && longRange != range ? longRange : "",
+			units
+		});
 	}
 
 	/**
 	 * Formats the target(s) part of the description.
 	 *
-	 * "{reachRange} {range}{sep}{max} {units}."
-	 *
 	 * @return {string}
 	 * @memberof AttackPreper
 	 */
 	formatTarget() {
-		const quantity = Helpers.getNumberString(this.attackData?.target.value ?? 1);
-		let type = this.attackData?.target.type;                  // The target type
+		const condition = this.activity?.activation?.condition;
+		if (condition) return condition; // if the user has specified a custom targeting condition, use that instead of 1 target / 1 creature
 
-		if (!type) type = this.attackData?.target.value > 1       // If the type wasn't defined, then
-			? game.i18n.localize("MOBLOKS5E.targetS") // if the value is greater than one it's plural
-			: game.i18n.localize("MOBLOKS5E.target")  // Ortherwise singluar
+		const affects = this.activity?.target?.affects ?? {};
+		const count = Number(affects.count) || 1;
+		const quantity = Helpers.getNumberString(count);
+		const config = CONFIG.DND5E.individualTargetTypes?.[affects.type];
 
-		if (this.attackData?.activation.condition) return this.attackData?.activation.condition; // if the user has specified a custom targeting condition, use that instead of 1 target / 1 creature
+		let type = config?.label ? game.i18n.localize(config.label).toLowerCase() : "";
+		if (!type) type = count > 1                     // If the type wasn't defined, then
+			? game.i18n.localize("MOBLOKS5E.targetS")   // if the value is greater than one it's plural
+			: game.i18n.localize("MOBLOKS5E.target");   // Otherwise singular
 
 		return game.i18n.format("MOBLOKS5E.AttackTarget", { quantity, type });
-	}
-
-	/**
-	 * Returns data for formatting versatile damage
-	 *
-	 * @return {DamageData}
-	 * @memberof AttackPreper
-	 */
-	getVersatileData() {
-		if (!this.attackData?.damage.versatile) return false;
-		return this.getDamageData(this.attackData.damage.parts[0], "v");
-	}
-
-	/**
-	 * Returns data for formatting damage of all damage parts
-	 *
-	 * @return {Array<DamageData}
-	 * @memberof AttackPreper
-	 */
-	getAllDamageData() {
-		return this.attackData.damage.parts.map(this.getDamageData.bind(this));
 	}
 
 	/**
@@ -171,19 +162,87 @@ export default class AttackPreper extends ItemPreper {
 	 * @property {string} text    - The textual description of the damage being dealt
 	 * @property {string} formula - The rollable formula for the damage
 	 *//**
+	 * Compute simplified damage formulas and types from the attack activity.
 	 *
+	 * @param {object} [config] - Additional roll configuration, e.g. `{ attackMode: "twoHanded" }`
+	 * @return {Array<{formula: string, types: string[]}>}
+	 * @memberof AttackPreper
+	 */
+	getDamageParts(config = {}) {
+		const activity = this.activity;
+		if (!activity?.getDamageConfig) return [];
+
+		const simplify = dnd5e.dice.simplifyRollFormula;
+		const aggregate = dnd5e.dice.aggregateDamageRolls;
+		const DamageRoll = CONFIG.Dice.DamageRoll;
+
+		try {
+			const rollData = activity.getRollData({ deterministic: true });
+			const rollConfig = activity.getDamageConfig({ ...config }, { formulaOptions: { modifiers: false }, rollData });
+			let rolls = rollConfig.rolls.map(({ base, data, options, parts }) => {
+				const formula = parts.filter(p => p !== "").join(" + ");
+				if (!formula) return null;
+				try {
+					return new DamageRoll(formula, data, { base, ...options });
+				}
+				catch (err) {
+					return null;
+				}
+			}).filter(r => r);
+			if (aggregate) rolls = aggregate(rolls);
+
+			return rolls.map(roll => {
+				let formula = roll.formula;
+				try {
+					roll.simplify?.();
+					formula = simplify(roll.formula, { preserveFlavor: false });
+				}
+				catch (err) { /* Keep the unsimplified formula */ }
+				const types = roll.options.types ?? (roll.options.type ? [roll.options.type] : []);
+				return { formula, types };
+			});
+		}
+		catch (err) {
+			console.warn(`Monster Blocks | Unable to prepare damage for ${this.item.name}`, err);
+			return [];
+		}
+	}
+
+	/**
+	 * Returns data for formatting versatile damage
+	 *
+	 * @return {DamageData|false}
+	 * @memberof AttackPreper
+	 */
+	getVersatileData() {
+		if (!this.item.system.isVersatile) return false;
+		const [part] = this.getDamageParts({ attackMode: "twoHanded" });
+		if (!part) return false;
+		return this.getDamageData(part);
+	}
+
+	/**
+	 * Returns data for formatting damage of all damage parts
+	 *
+	 * @return {Array<DamageData>}
+	 * @memberof AttackPreper
+	 */
+	getAllDamageData() {
+		return this.getDamageParts().map(this.getDamageData.bind(this));
+	}
+
+	/**
 	 * Returns the data for a damage roll
 	 *
-	 * @param {*} part
-	 * @param {number|string} index - The index of the damage in the attack array, or "v" for versatile
+	 * @param {{formula: string, types: string[]}} part
 	 * @return {DamageData}
 	 * @memberof AttackPreper
 	 */
-	getDamageData(part, index) {
+	getDamageData(part) {
 		return {
-			text: this.formatAttackAndDamage(index, part),
-			formula: this.damageFormula(index)
-		}
+			text: this.formatAttackAndDamage(part),
+			formula: part.formula
+		};
 	}
 
 	/**
@@ -191,22 +250,60 @@ export default class AttackPreper extends ItemPreper {
 	 *
 	 * "{average} ({formula}) {type}"
 	 *
-	 * @param {number} i - The index of the damage
-	 * @param {*} part
-	 * @return {*}
+	 * @param {{formula: string, types: string[]}} part
+	 * @return {string}
 	 * @memberof AttackPreper
 	 */
-	formatAttackAndDamage(i, part) {
-		const type = game.i18n.localize(                    // The damage type
-			"DND5E.Damage" +                                // The localization prefix for damage types
-				part[1].replace(/./, l => l.toUpperCase())  // Capitalize the string at part[1]
-		).toLowerCase()                                     // After localization, make all lower case
+	formatAttackAndDamage(part) {
+		const labels = part.types.map(t =>
+			CONFIG.DND5E.damageTypes[t]?.label ?? CONFIG.DND5E.healingTypes?.[t]?.label ?? t
+		).map(l => game.i18n.localize(l).toLowerCase());
+		const type = labels.length > 1
+			? game.i18n.getListFormatter({ type: "disjunction" }).format(labels)
+			: (labels[0] ?? "");
+
+		const average = MonsterBlock5e.averageRoll(part.formula, {});
+		const deterministic = this.isDeterministic(part.formula);
+
+		if (deterministic) return `${average} ${type}`.trim();
 
 		return game.i18n.format("MOBLOKS5E.AttackDamageTemplate", {
-			average: this.averageDamage(i),
-			formula: this.damageFormula(i),
+			average,
+			formula: part.formula,
 			type
 		});
+	}
+
+	/**
+	 * Whether or not a formula contains any dice.
+	 *
+	 * @param {string} formula
+	 * @return {boolean}
+	 */
+	isDeterministic(formula) {
+		try {
+			return new Roll(formula).isDeterministic;
+		}
+		catch (e) {
+			return false;
+		}
+	}
+
+	/**
+	 * The action type of the attack, e.g. "mwak"
+	 *
+	 * @type {string}
+	 * @readonly
+	 */
+	get actionType() {
+		const activity = this.activity;
+		if (!activity) return "";
+		try {
+			return activity.actionType ?? activity.getActionType?.() ?? "";
+		}
+		catch (e) {
+			return "";
+		}
 	}
 
 	/**
@@ -216,7 +313,8 @@ export default class AttackPreper extends ItemPreper {
 	 * @memberof AttackPreper
 	 */
 	getAttackType() {
-		return CONFIG.DND5E.itemActionTypes[this.attackData?.actionType] || "";
+		const label = CONFIG.DND5E.itemActionTypes?.[this.actionType];
+		return label ? game.i18n.localize(label) : "";
 	}
 
 	/**
@@ -226,54 +324,7 @@ export default class AttackPreper extends ItemPreper {
 	 * @memberof AttackPreper
 	 */
 	isRangedAttack() {
-		return ["rwak", "rsak"].includes(this.attackData?.actionType);
-	}
-
-	/**
-	 * Extract the specified roll formula from the item
-	 *
-	 * @param {number|string} [index=0] - The index of the rollable formula within the parts of the damage. If 'v', this referes to the versatile damage formula.
-	 * @return {string} A rollable formula
-	 * @memberof MonsterBlock5e
-	 */
-	getAttackFormula(index=0) {
-		if (index == "v") return this.attackData.damage?.versatile;  // Versatile formula is index 'v'
-
-		const parts = this.attackData.damage?.parts;
-		if (parts?.length > 0) return parts[index][0];    // If there are any parts, return the one at index
-
-		return 0;                                         // Otherwise, the formula is "0"
-	}
-
-	/**
-	 * Get the average damage for a given damage roll
-	 *
-	 * @param {number} [index=0] - The index of the damage formula in the damage parts
-	 * @return {string}
-	 * @memberof AttackPreper
-	 */
-	averageDamage(index=0) {
-		let attackFormula = this.getAttackFormula(index);
-		if (isDndV4OrNewer() && this.item.type === "weapon" && index == 0 && !/@mod\b/.test(attackFormula)) attackFormula += " + @mod";
-		const rollData = !isDndV4OrNewer() ? this.item.getRollData() : this.item.system.activities?.find(a => a.type === "attack")?.getRollData();
-		return MonsterBlock5e.averageRoll(attackFormula, rollData);
-	}
-
-	/**
-	 * Gets the damage formula from an attack
-	 *
-	 * @param {number} [index=0] - The index of the damage formula in the damage parts
-	 * @return {*}
-	 * @memberof AttackPreper
-	 */
-	damageFormula(index=0) {	// Extract and re-format the damage formula
-		let attackFormula = this.getAttackFormula(index);
-		if (isDndV4OrNewer() && this.item.type === "weapon" && index == 0 && !/@mod\b/.test(attackFormula)) attackFormula += " + @mod";
-		const rollData = !isDndV4OrNewer() ? this.item.getRollData() : this.item.system.activities?.find(a => a.type === "attack")?.getRollData();
-		const roll = new Roll(attackFormula, rollData);
-		const dice = game[game.system.id].dice;
-		const simplifyRollFormula = dice?.simplifyRollFormula;
-		return simplifyRollFormula(roll.formula);
+		return ["rwak", "rsak"].includes(this.actionType);
 	}
 
 	/**
@@ -283,6 +334,6 @@ export default class AttackPreper extends ItemPreper {
 	 * @memberof AttackPreper
 	 */
 	dealsDamage() {
-		return Boolean(this.attackData.damage?.parts?.length);
+		return this.getDamageParts().length > 0;
 	}
 }

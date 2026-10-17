@@ -1,4 +1,4 @@
-import { isDndV4OrNewer } from "../utilities.js";
+import { getActivities } from "../utilities.js";
 
 export default class ResourcePreper {
 	/**
@@ -16,6 +16,24 @@ export default class ResourcePreper {
 	}
 
 	/**
+	 * Get the first consumption target from any of the item's activities.
+	 *
+	 * @static
+	 * @param {Item5e} item
+	 * @return {object|undefined} - The consumption target `{ type, target, value }`
+	 * @memberof ResourcePreper
+	 */
+	static getConsumptionTarget(item) {
+		for (const activity of getActivities(item)) {
+			const targets = Array.from(activity.consumption?.targets ?? []);
+			// Consuming the item's own uses is represented by its "charges" instead.
+			const target = targets.find(t => t?.type && t.type !== "activityUses" && !(t.type === "itemUses" && !t.target));
+			if (target) return target;
+		}
+		return undefined;
+	}
+
+	/**
 	 * Checks whether or not an item has a resource limitation
 	 *
 	 * @static
@@ -25,19 +43,32 @@ export default class ResourcePreper {
 	 */
 	static hasResource(item) {
 		return Boolean(
-			// eslint-disable-next-line no-mixed-spaces-and-tabs
-			   (!isDndV4OrNewer() ? item.system.consume?.target : item.system.activities?.some(a => a.consumption?.targets?.length))
-			|| item.type == "consumable"
+			   item.type == "consumable"
 			|| item.type == "loot"
-			|| item.system.uses?.max
+			|| this.hasCharges(item)
+			|| this.getConsumptionTarget(item)
 		);
+	}
+
+	/**
+	 * Whether or not an item has limited uses that are not just a recharge.
+	 * Recharge abilities are shown with their own "(Recharge X-6)" label instead.
+	 *
+	 * @static
+	 * @param {Item5e} item
+	 * @return {boolean}
+	 * @memberof ResourcePreper
+	 */
+	static hasCharges(item) {
+		if (!item.system.uses?.max) return false;
+		const recovery = Array.from(item.system.uses.recovery ?? []);
+		return !(recovery.length && recovery.every(r => r.period === "recharge"));
 	}
 
 	/**
 	 * Returns the prepared resource.
 	 *
 	 * @return {*}
-	 * @memberof ResourcePreper
 	 */
 	getResource() {
 		if (!this.templateData.hasresource) return null;
@@ -49,19 +80,17 @@ export default class ResourcePreper {
 	}
 
 	/**
-	 * Determins the resource type
+	 * Determines the resource type
 	 *
 	 * @memberof ResourcePreper
 	 */
 	setType() {
 		if (this.item.type == "consumable" || this.item.type == "loot")
 			this.res.type = "consume";
-		else if (this.item.system.uses?.max)
+		else if (this.constructor.hasCharges(this.item))
 			this.res.type = "charges";
-		else if (isDndV4OrNewer())
-			this.res.type = this.item.system.activities?.find(a => a.consumption?.targets?.length)?.consumption.targets[0].type;
 		else
-			this.res.type = this.item.system.consume.type;
+			this.res.type = this.constructor.getConsumptionTarget(this.item)?.type;
 	}
 
 	/**
@@ -80,6 +109,9 @@ export default class ResourcePreper {
 			case "charges":
 				this.prepCharges();
 				break;
+			case "itemUses":
+				this.prepItemUses();
+				break;
 			case "material":
 			case "ammo":
 				this.prepMaterial();
@@ -87,7 +119,22 @@ export default class ResourcePreper {
 			case "consume":
 				this.prepConsume();
 				break;
+			case "spellSlots":
+				this.prepSpellSlots();
+				break;
 		}
+	}
+
+	/**
+	 * Get a label for the recovery period of an item's uses.
+	 *
+	 * @param {Item5e} item
+	 * @return {string}
+	 */
+	getRefresh(item) {
+		const recovery = Array.from(item.system.uses?.recovery ?? []).find(r => r.period !== "recharge");
+		const period = recovery ? CONFIG.DND5E.limitedUsePeriods[recovery.period] : null;
+		return period?.label ?? game.i18n.localize("MOBLOKS5E.ResourceRefresh");
 	}
 
 	/**
@@ -96,14 +143,18 @@ export default class ResourcePreper {
 	 * @memberof ResourcePreper
 	 */
 	prepAttribute() {
-		let t = !isDndV4OrNewer() ? this.item.system.consume.target : this.item.system.activities.find(a => a.consumption?.targets?.length)?.consumption.targets[0].target;
-		let r = t.match(/(.+)\.(.+)\.(.+)/);
-		let max = `system.${r[1]}.${r[2]}.max`;
+		const target = this.constructor.getConsumptionTarget(this.item)?.target ?? "";
+		const parts = target.split(".");
+		const field = parts.pop();
+		const base = parts.join(".");
 
-		this.res.target = "system." + t;
-		this.res.current = foundry.utils.getProperty(this.sheet.actor, this.res.target);
-		this.res.limit = foundry.utils.getProperty(this.sheet.actor, max);
-		this.res.refresh = game.i18n.localize("MOBLOKS5E.ResourceRefresh"); // It just says "Day" because thats typically the deal, and I don't see any other option.
+		// Attributes like legendary actions are now tracked as "spent", show the remaining value instead.
+		const valueKey = field === "spent" ? `system.${base}.value` : `system.${target}`;
+
+		this.res.target = valueKey;
+		this.res.current = foundry.utils.getProperty(this.sheet.actor, valueKey);
+		this.res.limit = foundry.utils.getProperty(this.sheet.actor, `system.${base}.max`);
+		this.res.refresh = game.i18n.localize("MOBLOKS5E.ResourceRefresh");
 	}
 	/**
 	 * Prepares items that have charges
@@ -112,11 +163,30 @@ export default class ResourcePreper {
 	 */
 	prepCharges() {
 		this.res.target = "system.uses.value";
-		this.res.entity = (!isDndV4OrNewer() ? this.item.system.consume.target : this.item.system.activities.find(a => a.consumption?.targets?.length)?.consumption.targets[0].target) || this.item.id;
+		this.res.entity = this.item.id;
 		this.res.current = this.item.system.uses.value;
 		this.res.limit = this.item.type == "spell" ? false : this.item.system.uses.max;
 		this.res.limTarget = "system.uses.max";
-		this.res.refresh = CONFIG.DND5E.limitedUsePeriods[this.item.system.uses.per || "charges"].label;
+		this.res.refresh = this.getRefresh(this.item);
+	}
+	/**
+	 * Prepares items that consume the uses of another item
+	 *
+	 * @memberof ResourcePreper
+	 */
+	prepItemUses() {
+		const id = this.constructor.getConsumptionTarget(this.item)?.target;
+		const other = this.sheet.actor.items.get(id);
+		if (!other) return;
+
+		this.res.type = "charges";
+		this.res.entity = other.id;
+		this.res.target = "system.uses.value";
+		this.res.current = other.system.uses?.value;
+		this.res.limit = other.system.uses?.max;
+		this.res.limTarget = "system.uses.max";
+		this.res.refresh = this.getRefresh(other);
+		if (other.id !== this.item.id) this.res.name = other.name;
 	}
 	/**
 	 * Prepares items that consume material components/loot
@@ -125,14 +195,30 @@ export default class ResourcePreper {
 	 * @memberof ResourcePreper
 	 */
 	prepMaterial() {
-		this.res.entity = !isDndV4OrNewer() ? this.item.system.consume.target : this.item.system.activities.find(a => a.consumption?.targets?.length)?.consumption.targets[0].target;
-		let ammo = this.sheet.actor.getEmbeddedDocument("Item", this.res.entity);
+		this.res.entity = this.constructor.getConsumptionTarget(this.item)?.target;
+		let ammo = this.sheet.actor.items.get(this.res.entity);
 		if (!ammo) return;
 
 		this.res.limit = false;
 		this.res.current = ammo.system.quantity;
 		this.res.target = "system.quantity";
 		this.res.name = ammo.name;
+	}
+	/**
+	 * Prepares items that consume spell slots
+	 *
+	 * @memberof ResourcePreper
+	 */
+	prepSpellSlots() {
+		const target = this.constructor.getConsumptionTarget(this.item)?.target;
+		const key = Number.isNumeric?.(target) ? `spell${target}` : target;
+		const slot = this.sheet.actor.system.spells?.[key];
+		if (!slot) return;
+
+		this.res.target = `system.spells.${key}.value`;
+		this.res.current = slot.value;
+		this.res.limit = slot.max;
+		this.res.refresh = game.i18n.localize("MOBLOKS5E.ResourceRefresh");
 	}
 	/**
 	 * Prepares items that consume consumables such as ammunition

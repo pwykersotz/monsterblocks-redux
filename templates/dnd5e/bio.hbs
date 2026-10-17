@@ -3,16 +3,21 @@
 		placeholder="{{localize "DND5E.Name"}}">{{actor.name}}</h1>
 	{{#unless flags.hide-profile-image}}
 		<figure class="profile-image">
-			<img src="{{actor.img}}" data-edit="img" title="{{actor.name}}{{#if flags.editing}} - {{localize "MOBLOKS5E.EditHint"}}{{/if}}">
+			<img src="{{portrait.src}}" data-edit="{{portrait.path}}" title="{{actor.name}}{{#if flags.editing}} - {{localize "MOBLOKS5E.EditHint"}}{{/if}}">
 		</figure>
 	{{/unless}}
 </header>
 <main class="bio-box">
 	<h4 class="attribute-name source">{{localize sourceStringId}}:</h4>
-	<span contenteditable="{{flags.editing}}" data-field-key="system.details.source"
-		placeholder="{{localize sourceStringId}}">{{data.details.source}}</span>
+	<span contenteditable="{{flags.editing}}" data-field-key="system.source.custom"
+		placeholder="{{localize sourceStringId}}">{{sourceLabel}}</span>
 	<h2 class="section-header">{{localize "DND5E.Biography"}}</h2>
 	<section class="biography active">
-		{{editor system.details.biography.value target="system.details.biography.value" button=(and owner flags.editing) owner=owner editable=flags.editing}}
+		{{#if (and owner flags.editing)}}
+			<prose-mirror name="system.details.biography.value" value="{{biography.value}}"
+				document-uuid="{{actor.uuid}}" toggled>{{{biography.enriched}}}</prose-mirror>
+		{{else}}
+			<div class="editor-content">{{{biography.enriched}}}</div>
+		{{/if}}
 	</section>
 </main>

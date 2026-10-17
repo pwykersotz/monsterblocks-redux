@@ -1,18 +1,14 @@
 <h4 class="attribute-name box-title">{{localize "DND5E.ArmorClass"}}</h4>
 <span class="attr-value">
 	<span class="ac-value">{{system.attributes.ac.value}}</span>
-	{{#unless (eq system.attributes.ac.calc "flat")}}
+	{{#if labels.armorType}}
 		<span class="paren">(</span>{{~" "~}}
 		<span class="ac-type">
-			{{~#if (eq system.attributes.ac.calc "custom")~}}
-			{{system.attributes.ac.formula}}
-			{{~else~}}
-			{{labels.armorType}}
-			{{~/if~}}
+			{{~labels.armorType~}}
 		</span>{{~" "~}}
 		<span class="paren">)</span>
-	{{/unless}}
+	{{/if}}
 </span>
-<a class="config-button" data-action="armor" title="{{localize "DND5E.ArmorConfig"}}">
+<a class="config-button" data-config="armor" title="{{localize "DND5E.ARMORCLASS.Action.Configure"}}">
 	<i class="fas fa-cog"></i>{{~" "~}}
 </a>{{~" "~}}

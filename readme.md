@@ -1,10 +1,16 @@
-![](https://img.shields.io/badge/Foundry-v9-informational)
+![](https://img.shields.io/badge/Foundry-v14-informational)
 ![Forge Installs](https://img.shields.io/badge/dynamic/json?label=Forge%20Installs&query=package.installs&suffix=%25&url=https%3A%2F%2Fforge-vtt.com%2Fapi%2Fbazaar%2Fpackage%2Fmonsterblock&colorB=4aa94a)
 ![Latest Release Download Count](https://img.shields.io/github/downloads/zeel01/MonsterBlocks/latest/monsterblock.zip)
 
 # Monster Blocks
 
 Monster Blocks is an NPC sheet for FoundryVTT designed to faithfully reproduce the appearance of D&D 5e monster statblocks.
+
+**Requires Foundry VTT v14 and the dnd5e system 6.x.** Version 4.0.0 rebuilt the sheet on ApplicationV2; older Foundry and dnd5e versions should use Monster Blocks 3.x.
+
+Numeric fields accept expressions: `+5` or `-3` adjust the current value, `*2` or `/2` scale it, `=-1` sets a negative value, and formulas such as `2d6+@abilities.con.mod` are rolled. The Math.js library module is no longer required.
+
+From the system's NPC sheet, use the dragon button in the window header to switch to Monster Blocks.
 
 **Quick Settings** are accessed through the **cog menu in the upper left corner**. This menu gives access to key functions such as toggling certain features, and themes.
 

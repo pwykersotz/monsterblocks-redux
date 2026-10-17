@@ -3,7 +3,7 @@
 .dnd5e.npc .window-header {
 	padding-left: 30px;
 }
-.monsterblock .window-header {
+.monsterblock.window-app .window-header {
 	padding-right: 8ch;
 }
 .monsterblock .window-header a.close {
@@ -117,6 +117,9 @@
 	text-shadow: 0 0 8px var(--inline-link-color);
 }
 .monsterblock .window-content {
+	position: static;
+	overflow-x: hidden;
+	overflow-y: auto;
 	padding: var(--window-padding);
 	background: var(--background-image), var(--background-filter);
 	background-repeat: repeat;
@@ -125,7 +128,7 @@
 	background-position: 0px 130px;
 	display: block;
 }
-.window-app .switches {
+:is(.window-app, .application) .switches {
 	/* background: red; */
 	width: 29px;
 	padding-left: 6px;
@@ -135,22 +138,22 @@
 	left: 2px;
 	color: #aaa;
 }
-.window-app.dnd5e .switches {
+:is(.window-app, .application).dnd5e .switches {
 	--background-image: url(../../ui/parchment.jpg);
 	--background-filter: rgba(0, 0, 0, 0);
 	--background-blend: none;
 	--heading-color: black;
 	--divider-color: gray;
 }
-.window-app .switches a {
+:is(.window-app, .application) .switches a {
 	width: 100%;
 	height: 100%;
 	display: inline-block;
 }
-.window-app .switches a.nochild {
+:is(.window-app, .application) .switches a.nochild {
 	width: initial;
 }
-.window-app .switches ul {
+:is(.window-app, .application) .switches ul {
 	margin: 0;
 	top: 0;
 	display: none;
@@ -164,7 +167,7 @@
 	z-index: 100;
 	box-shadow: -1px 1px 5px 0px var(--shadow-color);
 }
-.window-app .switches > ul {
+:is(.window-app, .application) .switches > ul {
 	margin-top: 6px;
 	margin-left: -8px;
 	top: unset;
@@ -172,23 +175,23 @@
 	position: fixed;
 	flex-direction: column;
 }
-.window-app .switches:hover > ul {
+:is(.window-app, .application) .switches:hover > ul {
 	display: flex;
 }
-.window-app .switches li a:not(:only-child):after {
+:is(.window-app, .application) .switches li a:not(:only-child):after {
 	display: block;
 	content: '>';
 	position: absolute;
 	right: .2em;
 	top: 0;
 }
-.window-app .switches li a.nochild:not(:only-child):after {
+:is(.window-app, .application) .switches li a.nochild:not(:only-child):after {
 	content: "";
 }
-.window-app .switches li:hover > ul {
+:is(.window-app, .application) .switches li:hover > ul {
 	display: block;
 }
-.window-app .switches li {
+:is(.window-app, .application) .switches li {
 	margin: 0;
 	width: calc(var(--column-width) / 2);
 	position: relative;
@@ -1120,4 +1123,49 @@ li:nth-last-of-type(2):after {
 }
 .monsterblock .flavor-text > p {
 	padding: 0 1ch;
+}
+
+/* ------------------------------------------------------------------ */
+/* Foundry VTT v14 / ApplicationV2 window adjustments                  */
+/* ------------------------------------------------------------------ */
+
+.monsterblock.application {
+	--background: transparent;
+	min-width: unset;
+	background-color: #f7e2ac;
+}
+.monsterblock.application .window-header {
+	position: relative;
+}
+.monsterblock.application .window-header .window-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.monsterblock .monsterblock-body {
+	position: static;
+}
+.monsterblock .monsterblock-body [contenteditable="true"]:focus {
+	outline: 1px dotted var(--divider-color);
+	box-shadow: none;
+}
+.monsterblock .config-button {
+	cursor: pointer;
+}
+.monsterblock .biography prose-mirror {
+	min-height: 10em;
+	color: var(--main-text-color);
+}
+.monsterblock.compact-window.application .window-header button.header-control {
+	font-size: 12px;
+	width: 1.5em;
+	height: 1.5em;
+	padding: 0;
+	border: none;
+	background: none;
+	color: var(--main-text-color);
+}
+.monsterblock .item-name.draggable,
+.monsterblock .spell.draggable {
+	cursor: pointer;
 }

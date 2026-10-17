@@ -5,10 +5,10 @@
 				<i class="fa fa-trash"></i>
 			</a>
 		{{/if}}
-		<span class="item-name" data-item-id="{{casting._id}}">{{casting.name}}</span>.
-		{{~#if item.hasresource~}}
-			{{> "modules/monsterblock/templates/dnd5e/parts/resource.hbs" resource=item.resource}}
-		{{~/if~}}
+		<span class="item-name draggable" data-item-id="{{casting._id}}">{{casting.name}}</span>
+		{{~#if casting.hasresource~}}
+			{{> "modules/monsterblock/templates/dnd5e/parts/resource.hbs" resource=casting.resource}}
+		{{~/if~}}{{localize "MOBLOKS5E.NameDescriptionSep"}}
 		<span class="description">
 			{{{casting.description.level}}}
 			{{{casting.description.ability}}}
@@ -40,7 +40,7 @@
 					{{~localize "MOBLOKS5E.Colon"}}
 					<ul class="inline-list spells-level-{{page.dataset.level}}">
 					{{#each page.spells as |spell id|}}
-						<li class="spell" data-item-id="{{spell._id}}">
+						<li class="spell draggable" data-item-id="{{spell._id}}">
 							{{#if @root.flags.show-delete}}
 								<a class="delete-item" data-item-id="{{spell._id}}">
 									<i class="fa fa-trash"></i>

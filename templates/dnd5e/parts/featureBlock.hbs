@@ -6,7 +6,7 @@
 			</a>
 		{{/if}}
 		{{#unless lairactions}}
-			<span class="item-name" data-item-id="{{item._id}}">
+			<span class="item-name draggable" data-item-id="{{item._id}}">
 				{{~item.name~}}
 			</span>
 			{{~#if item.rechargeValue~}}
@@ -16,6 +16,7 @@
 					data-roll-formula="1d6"
 					data-roll-target="{{item.rechargeValue}}"
 					data-roll-success="{{localize "DND5E.Charged"}}"
+					data-tooltip="{{#if item.isCharged}}{{localize "DND5E.Charged"}}{{else}}{{localize "MOBLOKS5E.NCharged"}}{{/if}}"
 					data-roll-failure="{{localize "MOBLOKS5E.NCharged"}}"
 					data-roll-handler="setCharged">
 					({{localize "MOBLOKS5E.Recharge"}} {{item.rechargeValue}}-6){{~" "~}}

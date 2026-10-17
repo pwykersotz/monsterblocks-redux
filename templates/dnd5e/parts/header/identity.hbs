@@ -1,7 +1,7 @@
 <h1 class="charname" contenteditable="{{flags.editing}}" data-field-key="name" placeholder="{{localize "DND5E.Name"}}">{{actor.name}}</h1>
 <div class="chartype">
 	<div class="select-field" data-select-key="system.traits.size" data-selected-value="{{system.traits.size}}">
-		<label class="{{#if flags.editing}}select-label{{/if}}">{{lookup (lookup config.actorSizes system.traits.size) "label"}}</label>{{~" "~}}
+		<label class="{{#if flags.editing}}select-label{{/if}}">{{labels.size}}</label>{{~" "~}}
 		{{#if flags.editing~}}
 			<ul class="actor-size select-list">
 			{{#each config.actorSizes as |sizeData size|}}
@@ -14,7 +14,7 @@
 	</div>{{~" "~}}
 	<span class="optional-space">
 		{{~labels.type~}}
-		<a class="config-button" data-action="type" title="{{localize "DND5E.CreatureTypeConfig"}}">
+		<a class="config-button" data-config="type" title="{{localize "DND5E.CreatureTypeConfig"}}">
 			<i class="fas fa-cog"></i>{{~" "~}}
 		</a>{{~" "~}}
 	</span>{{~" "~}}
@@ -25,11 +25,7 @@
 {{#unless flags.hide-profile-image}}
 	<figure class="profile-image">
 		<img
-			{{#if flags.use-token-image}}
-				src="{{actor.token.img}}" data-edit="token.img"
-			{{else}}
-				src="{{actor.img}}" data-edit="img"
-			{{/if}}
+			src="{{portrait.src}}" data-edit="{{portrait.path}}"
 			title="{{actor.name}}{{#if flags.editing}} - {{localize "MOBLOKS5E.EditHint"}}{{/if}}">
 	</figure>
 {{/unless}}

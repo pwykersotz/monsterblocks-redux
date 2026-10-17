@@ -22,7 +22,7 @@ export default class InnateSpellbookPrep {
 	 */
 	prepare() {                                              // We need to completely re-organize the spellbook for an innate spellcaster
 		for (let level of this.spellbook) {                  // Spellbook is seperated into sections based on level, though all the innate spells are lumped together, we still want to check all the sections.
-			if (level.prop !== "innate") continue;           // We don't care about sections that aren't marked as innate though
+			if (!["innate", "atwill"].includes(level.prop)) continue; // We only care about innate and at-will sections
 			this.prepareSpellLevel(level);
 		}
 
@@ -41,7 +41,7 @@ export default class InnateSpellbookPrep {
 	prepareSpellLevel(level) {
 		for (let spell of level.spells) {
 			this.prepSpellResource(spell);
-			this.sortSpell(spell);
+			this.sortSpell(spell, level.prop === "atwill");
 		}
 	}
 
@@ -52,7 +52,7 @@ export default class InnateSpellbookPrep {
 	 * @memberof InnateSpellbookPrep
 	 */
 	prepSpellResource(spellData) {
-		const spell = this.sheet.object.items.get(spellData._id);
+		const spell = spellData.document ?? this.sheet.actor.items.get(spellData._id);
 		spellData.hasresource = ResourcePreper.hasResource(spell);
 		if (!spellData.hasresource) return;
 		
@@ -67,9 +67,10 @@ export default class InnateSpellbookPrep {
 	 * @param {object} spell
 	 * @memberof InnateSpellbookPrep
 	 */
-	sortSpell(spell) {
+	sortSpell(spell, atWill = false) {
 		// Max uses is what we are going to end up sorting the spellbook by.
-		this.getPage(spell.system.uses.max).spells.push(spell);
+		const uses = atWill ? 0 : (Number(spell.system.uses?.max) || 0);
+		this.getPage(uses).spells.push(spell);
 	}
 
 	/**
@@ -101,7 +102,7 @@ export default class InnateSpellbookPrep {
 			canPrepare: false,
 			dataset: { level: -10, type: "spell" },
 			// This is important, as this string will be used to display on the sheet.
-			label: uses < 1 ? "At will" : (uses + "/day"),
+			label: uses < 1 ? game.i18n.localize("MOBLOKS5E.AtWill").capitalize() : (uses + "/day"),
 			order: -10,
 			override: 0,
 			prop: "innate",

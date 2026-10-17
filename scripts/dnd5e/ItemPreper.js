@@ -25,7 +25,7 @@ export default class ItemPreper {
 		this.templateData = templateData;
 
 		/** @type {Item5e} The real instance of the item */
-		this.item = sheet.object.items.get(item._id);
+		this.item = item.document ?? sheet.actor.items.get(item._id);
 	}
 
 	prepResources() {

@@ -5,7 +5,7 @@
 				<i class="fa fa-trash"></i>
 			</a>
 		{{/if}}
-		<span class="item-name" data-item-id="{{item._id}}">{{item.name}}</span>
+		<span class="item-name draggable" data-item-id="{{item._id}}">{{item.name}}</span>
 		{{~#if item.hasresource~}}
 			{{> "modules/monsterblock/templates/dnd5e/parts/resource.hbs" resource=item.resource}}
 		{{~/if~}}

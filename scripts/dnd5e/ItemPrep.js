@@ -38,17 +38,17 @@ export default class ItemPrep {
 	
 	/** @type {Object.<string, Feature>} A set of item classifications by type */
 	features = {
-		legResist:	  { prep: ItemPreper,    filter: MonsterBlock5e.isLegendaryResistance,        items: [], dataset: {type: "feat"}   },
-		legendary:	  { prep: ActionPreper,  filter: MonsterBlock5e.isLegendaryAction,            items: [], dataset: {type: "feat"}   },
-		lair:		  { prep: ActionPreper,  filter: MonsterBlock5e.isLairAction,                 items: [], dataset: {type: "feat"}   },
-		multiattack:  { prep: ActionPreper,  filter: MonsterBlock5e.isMultiAttack,                items: [], dataset: {type: "feat"}   },
-		casting:	  { prep: CastingPreper, filter: CastingPreper.isCasting.bind(CastingPreper), items: [], dataset: {type: "feat"}   },
-		reaction:	  { prep: ActionPreper,  filter: MonsterBlock5e.isReaction,                   items: [], dataset: {type: "feat"}   },
-		bonusActions: { prep: ActionPreper,  filter: MonsterBlock5e.isBonusAction,                items: [], dataset: {type: "feat"}   },
-		attacks:	  { prep: AttackPreper,  filter: item => item.type === "weapon",              items: [], dataset: {type: "weapon"} },
-		actions:	  { prep: ActionPreper,  filter: MonsterBlock5e.isAction,                     items: [], dataset: {type: "feat"}   },
-		features:	  { prep: ItemPreper,    filter: item => item.type === "feat",                items: [], dataset: {type: "feat"}   },
-		equipment:	  { prep: ItemPreper,    filter: () => true,                                  items: [], dataset: {type: "loot"}   }
+		legResist:	  { prep: ItemPreper,    filter: item => MonsterBlock5e.isLegendaryResistance(item), items: [], dataset: {type: "feat"}   },
+		legendary:	  { prep: ActionPreper,  filter: item => MonsterBlock5e.isLegendaryAction(item),     items: [], dataset: {type: "feat"}   },
+		lair:		  { prep: ActionPreper,  filter: item => MonsterBlock5e.isLairAction(item),          items: [], dataset: {type: "feat"}   },
+		multiattack:  { prep: ActionPreper,  filter: item => MonsterBlock5e.isMultiAttack(item),         items: [], dataset: {type: "feat"}   },
+		casting:	  { prep: CastingPreper, filter: item => CastingPreper.isCasting(item),              items: [], dataset: {type: "feat"}   },
+		reaction:	  { prep: ActionPreper,  filter: item => MonsterBlock5e.isReaction(item),            items: [], dataset: {type: "feat"}   },
+		bonusActions: { prep: ActionPreper,  filter: item => MonsterBlock5e.isBonusAction(item),         items: [], dataset: {type: "feat"}   },
+		attacks:	  { prep: AttackPreper,  filter: item => AttackPreper.isAttack(item),                items: [], dataset: {type: "weapon"} },
+		actions:	  { prep: ActionPreper,  filter: item => MonsterBlock5e.isAction(item),              items: [], dataset: {type: "feat"}   },
+		features:	  { prep: ItemPreper,    filter: item => item.type === "feat",                       items: [], dataset: {type: "feat"}   },
+		equipment:	  { prep: ItemPreper,    filter: () => true,                                         items: [], dataset: {type: "loot"}   }
 	};
 	
 	/**
@@ -57,7 +57,8 @@ export default class ItemPrep {
 	 * @memberof ItemPrep
 	 */
 	prepareItems() {
-		const [other, spells] = this.data.items.partition(item => item.type === "spell");
+		const spells = this.data.items.filter(item => item.type === "spell");
+		const other = this.data.items.filter(item => item.type !== "spell");
 		this.organizeSpellbooks(spells);
 		this.organizeFeatures(other);
 	}
@@ -69,8 +70,77 @@ export default class ItemPrep {
 	 * @memberof ItemPrep
 	 */
 	organizeSpellbooks(spells) {
-		this.data.spellbook = this.sheet._prepareSpellbook(this.data, spells);
+		this.data.spellbook = this.constructor.prepareSpellbook(this.sheet.actor, spells);
 		this.data.innateSpellbook = new InnateSpellbookPrep(this.data.spellbook, this.sheet).prepare();
+	}
+
+	/**
+	 * Organize spells into "pages" by spellcasting method and level.
+	 *
+	 * This reproduces the structure of the spellbook from older versions of
+	 * the dnd5e system so the rest of Monster Blocks can work with it:
+	 *  - At-will spells:  order -20, prop "atwill"
+	 *  - Innate spells:   order -10, prop "innate"
+	 *  - Cantrips:        order 0
+	 *  - Pact magic:      order 0.5, prop "pact"
+	 *  - Leveled spells:  order = spell level, prop "spellN"
+	 *
+	 * @static
+	 * @param {Actor5e} actor
+	 * @param {object[]} spells - Item contexts for spells
+	 * @return {object[]}
+	 * @memberof ItemPrep
+	 */
+	static prepareSpellbook(actor, spells) {
+		const book = {};
+		const slots = actor.system.spells ?? {};
+
+		const getPage = (prop, order, level, label) => {
+			if (book[prop]) return book[prop];
+			const slot = slots[prop] ?? {};
+			return book[prop] = {
+				label,
+				order,
+				prop,
+				spells: [],
+				uses: slot.value ?? 0,
+				slots: slot.max ?? 0,
+				override: slot.override ?? null,
+				usesSlots: Boolean(slot.max),
+				canCreate: false,
+				canPrepare: false,
+				dataset: { level, type: "spell" }
+			};
+		};
+
+		for (const spell of spells) {
+			const system = spell.system;
+			const method = system.method ?? system.preparation?.mode ?? "spell";
+			const level = Number(system.level) || 0;
+
+			// Spells granted by other items are not part of the stat block.
+			if (spell.document?.getFlag?.("dnd5e", "cachedFor")) continue;
+
+			let page;
+			switch (method) {
+				case "atwill":
+					page = getPage("atwill", -20, level, game.i18n.localize("MOBLOKS5E.AtWill"));
+					break;
+				case "innate":
+					page = getPage("innate", -10, level, CONFIG.DND5E.spellcasting?.innate?.label ?? "Innate");
+					break;
+				case "pact":
+					page = level === 0
+						? getPage("spell0", 0, 0, CONFIG.DND5E.spellLevels?.[0] ?? "")
+						: getPage("pact", 0.5, level, CONFIG.DND5E.spellcasting?.pact?.label ?? "Pact");
+					break;
+				default:
+					page = getPage(`spell${level}`, level, level, CONFIG.DND5E.spellLevels?.[level] ?? String(level));
+			}
+			page.spells.push(spell);
+		}
+
+		return Object.values(book).sort((a, b) => a.order - b.order);
 	}
 
 	/**
@@ -82,7 +152,12 @@ export default class ItemPrep {
 	organizeFeatures(items) {
 		for (let item of items) {
 			const category = Object.values(this.features).find(cat => cat.filter(item));
-			this.prepareItem(category, item, this.data);
+			try {
+				this.prepareItem(category, item, this.data);
+			}
+			catch (err) {
+				console.error(`Monster Blocks | Failed to prepare item "${item.name}" (${item._id})`, err);
+			}
 			category.items.push(item);
 		}
 	}

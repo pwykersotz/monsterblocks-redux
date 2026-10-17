@@ -47,7 +47,7 @@ export default class Flags {
 	 */
 	static get defaultFlags() {
 		return Object.fromEntries(
-			Object.entries(this.flagDefaults).map(([name, details]) => [name, duplicate(
+			Object.entries(this.flagDefaults).map(([name, details]) => [name, foundry.utils.deepClone(
 				getSetting(this.scope, details.setting || name)
 				?? details.default
 			)])
@@ -87,7 +87,10 @@ export default class Flags {
 
 		this.flags = new Proxy(this, {
 			get: this.constructor.getFlag.bind(this.constructor),
-			set: this.constructor.setFlag.bind(this.constructor)
+			set: (flags, flag, value) => {
+				this.constructor.setFlag(flags, flag, value);
+				return true;
+			}
 		});
 	}
 

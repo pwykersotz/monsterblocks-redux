@@ -1,49 +1,117 @@
 import { MenuItem, MenuTree } from "../MenuTree.js";
-import { debug, ContentEditableAdapter, getTranslationArray, castType, isDndV4OrNewer } from "../utilities.js";
-import { inputExpression } from "../../input-expressions/handler.js";
+import { debug, getTranslationArray, castType, evaluateExpression, getActivity, getActivities, splitSemicolons } from "../utilities.js";
 import ItemPrep from "./ItemPrep.js";
 import Flags from "./Flags5e.js";
+import PopupHandler from "../PopupHandler.js";
 
 /* global QuickInsert:readonly */
 /* global dnd5e:readonly */
 
+const { HandlebarsApplicationMixin } = foundry.applications.api;
+const { ActorSheetV2 } = foundry.applications.sheets;
+
+/** Path prefix for all templates */
+const TEMPLATE_PATH = "modules/monsterblock/templates/dnd5e";
+
+/** Icons used to show proficiency levels in menus */
+const PROFICIENCY_ICONS = {
+	0:   '<i class="far fa-circle"></i>',
+	0.5: '<i class="fas fa-adjust"></i>',
+	1:   '<i class="fas fa-check"></i>',
+	2:   '<i class="fas fa-check-double"></i>'
+};
+
+/** The ID this sheet is registered under. Kept as `dnd5e.MonsterBlock5e` so existing actors keep their sheet. */
+export const SHEET_ID = "dnd5e.MonsterBlock5e";
+
+/** The ID of the dnd5e system's default NPC sheet. */
+export const DEFAULT_NPC_SHEET_ID = "dnd5e.NPCActorSheet";
+
 /**
  * Main class for the Monster Blocks module
  *
+ * Built on ApplicationV2 for Foundry VTT v14 and dnd5e 6.x.
+ *
  * @export
  * @class MonsterBlock5e
- * @extends {ActorSheet5eNPC}
+ * @extends {ActorSheetV2}
  */
-export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5eNPC {
-	constructor(...args) {
-		super(...args);
-
-		this.position.default = true;
+export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorSheetV2) {
+	constructor(options = {}) {
+		super(options);
 
 		this.flagManager = new Flags(this);
-
-		//this.flagManager.prep().then((p) => {
-			this.options.classes.push(this.themes[this.currentTheme].class);
-			//if (p)
-			if (!this.actor.compendium) this.setCurrentTheme(this.currentTheme);
-		//});
+		this.lastSelection = {};
+		this.lastValue = undefined;
 
 		this.prepMenus();
 	}
 
-	get template() {
-		return "modules/monsterblock/templates/dnd5e/monsterblock5e.hbs";
-	}
-
-	static get defaultOptions() {
-		return foundry.utils.mergeObject(super.defaultOptions, {
-			classes: ["monsterblock", "sheet", "actor"],
+	/** @override */
+	static DEFAULT_OPTIONS = {
+		classes: ["monsterblock", "sheet", "actor"],
+		position: {
 			width: 406,	// 406 Column width of 390, plus 8px of padding on each side.
-			height: 400, // Arbitrary and basically meaningless.
-			dragDrop: [{dragSelector: ".item .item-name"}, {dragSelector: ".spell-list .spell"}],
+			height: 400 // Arbitrary, the sheet is re-sized to fit its content after rendering.
+		},
+		window: {
 			resizable: false
-		});
-	}
+		},
+		form: {
+			submitOnChange: true,
+			closeOnSubmit: false
+		}
+	};
+
+	/** @override */
+	static PARTS = {
+		sheet: {
+			template: `${TEMPLATE_PATH}/monsterblock5e.hbs`
+		}
+	};
+
+	/**
+	 * All the templates used as partials by the sheet.
+	 *
+	 * @type {string[]}
+	 */
+	static PARTIALS = [
+		// Shared Partials
+		"switches.hbs",
+		"parts/switch.hbs",
+		"parts/trigger.hbs",
+
+		// Actor Sheet Sections
+		"bio.hbs",
+		"header.hbs",
+		"main.hbs",
+		"collapsibleSection.hbs",
+		"sectionHeader.hbs",
+
+		// Actor Sheet Partials
+		"parts/header/identity.hbs",
+		"parts/header/attributes1.hbs",
+		"parts/header/abilities.hbs",
+		"parts/header/attributes2.hbs",
+
+		"parts/header/attributes/armorclass.hbs",
+		"parts/header/attributes/hitpoints.hbs",
+		"parts/header/attributes/movement.hbs",
+		"parts/header/attributes/saves.hbs",
+		"parts/header/attributes/skills.hbs",
+		"parts/header/attributes/senses.hbs",
+		"parts/header/attributes/damage.hbs",
+
+		"parts/main/spellcasting.hbs",
+		"parts/main/attack.hbs",
+		"parts/main/legendaryActs.hbs",
+		"parts/main/lairActs.hbs",
+
+		"parts/menuItem.hbs",
+		"parts/resource.hbs",
+		"parts/featureBlock.hbs",
+		"parts/damageRoll.hbs"
+	].map(p => `${TEMPLATE_PATH}/${p}`);
 
 	get flags() {
 		return this.flagManager.flags;
@@ -55,178 +123,453 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 		return this.flagManager.constructor.defaultFlags;
 	}
 
+	/* -------------------------------------------- */
+	/*  Rendering                                   */
+	/* -------------------------------------------- */
+
 	/**
 	 * Provides the data used in Handlebars for the sheet template.
 	 *
-	 * @return {object}
+	 * @param {object} options
+	 * @return {Promise<object>}
 	 * @memberof MonsterBlock5e
 	 * @override
 	 */
-	async getData() {	// Override and add to the getData() function
-		const data = await super.getData();
+	async _prepareContext(options) {
+		const context = await super._prepareContext(options);
+		const actor = this.actor;
+		const system = actor.system;
 
-		data.notOwner = !data.owner;
-		data.limited = this.actor.limited;
+		Object.assign(context, {
+			actor,
+			system,
+			source: system._source ?? actor._source.system,
+			config: CONFIG.DND5E,
+			owner: actor.isOwner,
+			notOwner: !actor.isOwner,
+			limited: actor.limited,
+			cssClass: this.isEditable ? "editable" : "locked"
+		});
 
-		// Tweak a few properties to get a proper output
-		data.system.details.xp.label = this.constructor.formatNumberCommas(data.system.details.xp.value);
-		data.hp.average = this.constructor.averageRoll(data.hp.formula, this.actor.getRollData());
+		context.labels = this.prepLabels();
+		context.hp = {
+			...system.attributes.hp,
+			average: this.constructor.averageRoll(system.attributes.hp.formula, actor.getRollData())
+		};
+		context.abilities = this.prepAbilities();
+		context.skills = this.prepSkills();
+		context.languages = this.prepLanguages();
+		context.damageTraits = this.prepDamageTraits();
+		context.legendary = this.prepLegendary();
+		this.prepMovement(context);
+		this.prepSenses(context);
 
-		this.prepAbilities(data);
-		this.prepMovement(data);
-		this.prepSenses(data);
-		this.updateDamageImmunityResistanceVulnerabilityText(data);
-		this.updateConditionImmunities(data);
-
-		data.flags = {};
-		data.allFlags = [];
+		context.flags = {};
+		context.allFlags = [];
 
 		for (let flag of this.allFlags) {
-			data.flags[flag.name] = flag.value;
-			data.allFlags.push(flag);
+			context.flags[flag.name] = flag.value;
+			context.allFlags.push(flag);
 		}
 
-		data.switches = this.getSwitches(data);
+		context.switches = this.getSwitches(context);
 
-		if (data.notOwner || !this.options.editable) data.flags.editing = false;
-		if (!data.flags.editing) data.flags["show-delete"] = false;
-		if (this.actor.limited) data.flags["show-bio"] = true;
+		if (context.notOwner || !this.isEditable) context.flags.editing = false;
+		if (!context.flags.editing) context.flags["show-delete"] = false;
+		if (actor.limited) context.flags["show-bio"] = true;
 
-		for (let fk of Object.keys(data.features)) {
-			for (let item of data.features[fk].items) {
-				const value = await TextEditor.enrichHTML(item.system.description.value, { secrets: (data.owner && !data.flags["hidden-secrets"])});
-				item.enrichedValue = value;
-				item.rechargeValue = isDndV4OrNewer() ? item.system.uses.recovery.find(r => r.period === "recharge")?.formula : item.system.recharge?.value;
-				item.activationCost = isDndV4OrNewer() ? item.system.activities.find(a => a.activation.value)?.activation.value : item.system.activation?.cost;
+		// Prepare items in the old "getData" format, then classify them.
+		context.items = actor.items.contents
+			.slice()
+			.sort((a, b) => (a.sort || 0) - (b.sort || 0))
+			.map(item => this.constructor.itemContext(item));
+		new ItemPrep(this, context);
+
+		const TextEditor = foundry.applications.ux.TextEditor.implementation;
+		for (let fk of Object.keys(context.features)) {
+			for (let item of context.features[fk].items) {
+				const document = item.document;
+				item.enrichedValue = await TextEditor.enrichHTML(document.system.description?.value ?? "", {
+					secrets: (context.owner && !context.flags["hidden-secrets"]),
+					rollData: document.getRollData?.() ?? {},
+					relativeTo: document
+				});
+				const recharge = this.constructor.getRecharge(document);
+				item.rechargeValue = recharge ? (Number(recharge.formula) || 6) : null;
+				item.isCharged = recharge ? !recharge.uses.spent : null;
+				item.activationCost = getActivities(document).find(a => a.activation?.type === "legendary")?.activation.value
+					?? getActivities(document).find(a => a.activation?.value)?.activation.value;
 			}
 		}
 
-		data.info = {		// A collection of extra information used mainly for conditionals
+		const features = context.features;
+		context.info = {		// A collection of extra information used mainly for conditionals
 			hasSaveProfs: this.hasSaveProfs(),
 			hasSkills: this.hasSkills(),
-			hasCastingFeature: Boolean(data.features.casting.items.length),
-			hasLegendaryActions: Boolean(data.features.legendary.items.length),
-			hasLair: Boolean(data.features.lair.items.length),
-			hasActions: Boolean(data.features.attacks.items.length || data.features.actions.items.length || data.features.multiattack.items.length),
-			hasBonusActions: Boolean(data.features.bonusActions.items.length),
-			hasReactions: Boolean(data.features.reaction.items.length),
-			hasFeatures: Boolean(data.features.features.items.length || data.features.casting.items.length || data.features.legResist.items.length),
-			hasLoot: Boolean(data.features.equipment.items.length),
+			hasCastingFeature: Boolean(features.casting.items.length),
+			hasLegendaryActions: Boolean(features.legendary.items.length),
+			hasLair: Boolean(features.lair.items.length),
+			hasActions: Boolean(features.attacks.items.length || features.actions.items.length || features.multiattack.items.length),
+			hasBonusActions: Boolean(features.bonusActions.items.length),
+			hasReactions: Boolean(features.reaction.items.length),
+			hasFeatures: Boolean(features.features.items.length || features.casting.items.length || features.legResist.items.length),
+			hasLoot: Boolean(features.equipment.items.length),
 			vttatokenizer: Boolean(window.Tokenizer)
-		}
-		data.info["hasAbilities"] = Boolean(
-			data.info.hasFeatures ||
-			data.info.hasActions ||
-			data.info.hasBonusActions ||
-			data.info.hasReactions ||
-			data.info.hasLegendaryActions ||
-			data.info.hasLair ||
-			data.info.hasLoot
+		};
+		context.info.hasAbilities = Boolean(
+			context.info.hasFeatures ||
+			context.info.hasActions ||
+			context.info.hasBonusActions ||
+			context.info.hasReactions ||
+			context.info.hasLegendaryActions ||
+			context.info.hasLair ||
+			context.info.hasLoot
 		);
 
-		data.menus = this.menuTrees;
-		Object.values(this.menuTrees).forEach(m => m.update(m, data));
+		context.menus = this.menuTrees;
+		Object.values(this.menuTrees).forEach(m => m.update(m, context));
 
-		data.themes = this.themes;
+		context.themes = this.themes;
 
-		data.sourceStringId = game.i18n.has("DND5E.Source") ? "DND5E.Source" : "DND5E.SOURCE.FIELDS.source.label";
+		context.sourceStringId = "DND5E.SOURCE.FIELDS.source.label";
+		context.sourceLabel = system.source?.label || system.source?.custom || system.source?.book || "";
 
-		this.templateData = data;
-		return data;
+		context.portrait = this.flags["use-token-image"] ? {
+			src: actor.prototypeToken?.texture?.src || actor.img,
+			path: "prototypeToken.texture.src"
+		} : {
+			src: actor.img,
+			path: "img"
+		};
+
+		context.biography = {
+			value: context.source?.details?.biography?.value ?? system.details?.biography?.value ?? "",
+			enriched: await TextEditor.enrichHTML(system.details?.biography?.value ?? "", {
+				secrets: context.owner,
+				rollData: actor.getRollData(),
+				relativeTo: actor
+			})
+		};
+
+		this.templateData = context;
+		return context;
 	}
 
 	/**
-	 * Constructs a FormData object using data from the sheet,
-	 * this version gets data from `contenteditable` and other
-	 * custom fields rather than standard HTML form elements.
+	 * Create a plain object representing an item for use in templates.
+	 * Item preparers add their own data to this object without modifying the document.
 	 *
-	 * @param {object} updateData     Additional data that should be merged with the form data
+	 * @param {Item5e} item
+	 * @return {object}
+	 */
+	static itemContext(item) {
+		return {
+			_id: item.id,
+			id: item.id,
+			name: item.name,
+			img: item.img,
+			type: item.type,
+			system: item.system,
+			flags: item.flags,
+			labels: item.labels,
+			document: item
+		};
+	}
+
+	/**
+	 * Prepare the various header labels.
+	 *
+	 * @return {object}
+	 */
+	prepLabels() {
+		const system = this.actor.system;
+		const formatCR = dnd5e.utils?.formatCR;
+		const cr = system.details.cr;
+		const xp = cr === null || cr === undefined ? 0 : (this.actor.getCRExp?.(cr) ?? system.details.xp?.value ?? 0);
+
+		return {
+			...this.actor.labels,
+			type: dnd5e.documents.Actor5e.formatCreatureType?.(system.details.type) ?? system.details.type?.label ?? "",
+			size: CONFIG.DND5E.actorSizes[system.traits.size]?.label ?? system.traits.size,
+			cr: cr === null || cr === undefined ? "—" : (formatCR ? formatCR(cr, { narrow: false }) : String(cr)),
+			xp: this.constructor.formatNumberCommas(xp),
+			proficiency: this.constructor.formatModifier(system.attributes.prof ?? 0),
+			armorType: system.attributes.ac.label ?? ""
+		};
+	}
+
+	/**
+	 * Prepare ability scores for display.
+	 *
+	 * @return {object}
+	 */
+	prepAbilities() {
+		return Object.fromEntries(Object.entries(this.actor.system.abilities).map(([id, ability]) => {
+			const save = typeof ability.save === "object" ? ability.save?.value : ability.save;
+			return [id, {
+				...ability,
+				id,
+				label: CONFIG.DND5E.abilities[id]?.label ?? id,
+				abbr: game.i18n.localize("MOBLOKS5E.Abbr" + id),
+				modLabel: this.constructor.formatModifier(ability.mod ?? 0),
+				saveValue: save ?? ability.mod ?? 0,
+				saveLabel: this.constructor.formatModifier(save ?? ability.mod ?? 0),
+				proficient: Boolean(ability.proficient)
+			}];
+		}));
+	}
+
+	/**
+	 * Prepare skills for display.
+	 *
+	 * @return {object}
+	 */
+	prepSkills() {
+		return Object.fromEntries(Object.entries(this.actor.system.skills ?? {})
+			.filter(([id]) => id in CONFIG.DND5E.skills)
+			.map(([id, skill]) => [id, {
+				...skill,
+				id,
+				label: CONFIG.DND5E.skills[id]?.label ?? id,
+				abilityAbbr: game.i18n.localize(`MOBLOKS5E.Abbr${skill.ability}`),
+				icon: this._getProficiencyIcon(skill.value),
+				hover: CONFIG.DND5E.proficiencyLevels[skill.value],
+				totalLabel: this.constructor.formatModifier(skill.total ?? 0)
+			}]));
+	}
+
+	/**
+	 * Prepare the list of languages and communication types.
+	 *
+	 * @return {string[]}
+	 */
+	prepLanguages() {
+		const languages = this.actor.system.traits?.languages;
+		const list = [...(languages?.labels?.languages ?? [])];
+		for (const [key, { label }] of Object.entries(CONFIG.DND5E.communicationTypes ?? {})) {
+			const data = languages?.communication?.[key];
+			if (!data?.value) continue;
+			const units = data.units ?? this.actor.system.attributes?.senses?.units ?? "ft";
+			list.push(`${label.toLowerCase()} ${data.value} ${units}${game.i18n.localize("MOBLOKS5E.SpeedUnitAbbrEnd")}`);
+		}
+		return list;
+	}
+
+	/**
+	 * Re-localizes the text for damage resistances, immunities, and vulnerabilities
+	 * to match the working in the books, and prepares condition immunities.
+	 *
 	 * @return {object}
 	 * @memberof MonsterBlock5e
-	 * @override
 	 */
-	_getSubmitData(updateData={}) {
-		if (!this.form) throw new Error(`The FormApplication subclass has no registered form element`);
+	prepDamageTraits() {
+		const Trait = dnd5e.documents.Trait;
+		const traits = this.actor.system.traits;
+		const result = {};
 
-		if (!updateData) updateData = {};
+		["dv", "dr", "di"].forEach(damageSet => {
+			const trait = traits[damageSet];
+			if (!trait) return;
+			const damageTypes = new Set(trait.value ?? []);
+			const bypasses = trait.bypasses ?? new Set();
+			const entry = { selected: [], physical: false, visible: false };
 
-		const form = this.form;
-		const formData = new FormDataExtended(this.form, { editors: this.editors });
+			if (damageTypes.has("bludgeoning") && damageTypes.has("piercing") && damageTypes.has("slashing") && bypasses.size > 0) {
+				damageTypes.delete("bludgeoning");
+				damageTypes.delete("piercing");
+				damageTypes.delete("slashing");
+				if (bypasses.size === 1 && bypasses.has("mgc")) entry.physical = game.i18n.localize("MOBLOKS5E.physicalDamage");
+				else {
+					const types = Array.from(bypasses).map(p => (CONFIG.DND5E.itemProperties[p]?.label ?? p).toLowerCase());
+					entry.physical = game.i18n.format("MOBLOKS5E.physicalDamageBypass", {
+						bypass: game.i18n.getListFormatter({ type: "disjunction" }).format(types)
+					});
+				}
+			}
 
-		const fields = form.querySelectorAll("[data-field-key]");
-		for (let field of fields) {
-			let key = field.dataset.fieldKey;
-			let type = field.dataset.dtype || "String";
-			let value = field.innerText;
+			entry.selected = [
+				...Array.from(damageTypes).map(k => Trait.keyLabel(k, { trait: damageSet }) ?? k),
+				...splitSemicolons(trait.custom)
+			];
+			entry.visible = Boolean(entry.physical || entry.selected.length > 0);
+			result[damageSet] = entry;
+		});
 
-			value = this.handleSpecial(key, value);
-
-			updateData[key] = castType(value, type);
+		const ci = traits.ci;
+		if (ci) {
+			const selected = [
+				...Array.from(ci.value ?? []).map(k => Trait.keyLabel(k, { trait: "ci" }) ?? k),
+				...splitSemicolons(ci.custom)
+			];
+			result.ci = { selected, physical: false, visible: selected.length > 0 };
 		}
 
-		const selects = form.querySelectorAll("[data-select-key]");
-		for (let select of selects) {
-			let key = select.dataset.selectKey;
-			let value = select.dataset.selectedValue;
+		return result;
+	}
 
-			updateData[key] = value;
+	/**
+	 * Prepare legendary action counts.
+	 *
+	 * @return {object}
+	 */
+	prepLegendary() {
+		const legact = this.actor.system.resources?.legact ?? {};
+		return {
+			value: legact.value ?? 0,
+			max: legact.max ?? 0
+		};
+	}
+
+	/**
+	 * @typedef moveData
+	 * A set of data about a movement speed
+	 * used to generate the text to display on the sheet.
+	 *
+	 * @property {string} name - The name of the movement type
+	 * @property {Boolean} showLabel - True if the label should be shown, otherwise the label is hidden.
+	 * @property {string} label - The label for this movement speed, should not be capitalized
+	 * @property {number|string} value - The speed, if zero this is set to an empty string so that nothing is displayed
+	 * @property {string} unit - The unit these measurements are in, typically an abbreviation ending in a character like a period
+	 */
+	/**
+	 * Prepares a new `movement` property on the context
+	 * containing information needed to format the
+	 * various movements speeds on the sheet.
+	 *
+	 * @param {object} context - The context object for the template.
+	 * @memberof MonsterBlock5e
+	 */
+	prepMovement(context) {
+		const movementData = this.actor.system.attributes.movement;
+		const speeds = movementData.speeds ?? movementData;
+		const types = Object.entries(CONFIG.DND5E.movementTypes ?? {})
+			.filter(([k, config]) => !config?.hidden || k === "walk");
+		const unit = (movementData.units ?? "ft") + game.i18n.localize("MOBLOKS5E.SpeedUnitAbbrEnd");
+
+		/** @type moveData[] */
+		const movement = [];
+		for (const [move, config] of types) {
+			const speed = Number(speeds[move]) || 0;
+			const label = game.i18n.localize(config?.label ?? config ?? move);
+			movement.push({
+				name: move,
+				fly: move == "fly",
+				showLabel: move != "walk",
+				label: label.toLowerCase(),
+				value: speed > 0 ? speed : move != "walk" ? "" : "0",
+				unit
+			});
 		}
 
-		const skillCycles = form.querySelectorAll("[data-skill-id]");
-		for (let skill of skillCycles) {
-			let key = `data.skills.${skill.dataset.skillId}.value`;
-			let value = skill.dataset.skillValue;
+		context.movement = movement.filter(m => m.value || m.name == "walk");
+		context.movementSpecial = splitSemicolons(movementData.special).join(", ");
+		context.hover = Boolean(movementData.hover);
+	}
 
-			updateData[key] = castType(value, "Number");
-		}
+	/**
+	 * Prepares a new `senses` property on the context
+	 * containing information needed to format the
+	 * various senses on the sheet.
+	 *
+	 * @param {object} context - The context object for the template.
+	 * @memberof MonsterBlock5e
+	 */
+	prepSenses(context) {
+		const sensesData = this.actor.system.attributes.senses ?? {};
+		const ranges = sensesData.ranges ?? sensesData;
+		const unit = (sensesData.units ?? "ft") + game.i18n.localize("MOBLOKS5E.SpeedUnitAbbrEnd");
 
-		const toggles = form.querySelectorAll("[data-toggle-key]");
-		for (let toggle of toggles) {
-			let key = toggle.dataset.toggleKey;
-			let value = toggle.dataset.toggleValue == "true";
+		const senses = Object.entries(CONFIG.DND5E.senses ?? {}).map(([sense, config]) => {
+			const range = Number(ranges[sense]) || 0;
+			const label = game.i18n.localize(config?.label ?? config ?? sense);
+			return {
+				name: sense,
+				label: label.toLowerCase(),
+				value: range > 0 ? range : "",
+				unit
+			};
+		});
 
-			updateData[key] = castType(value, "Boolean");
-		}
+		context.senses = senses.filter(s => s.value);
+		context.specialSenses = {
+			passivePerception: this.getPassivePerception(),
+			special: { value: splitSemicolons(sensesData.special).join(", ") }
+		};
+	}
 
-		// Process editable images
-		const images = form.querySelectorAll("img[data-edit], token.img[data-edit]")
-		for (let img of images) {
-			if (img.getAttribute("disabled")) continue;
-			let basePath = window.location.origin + "/";
-			if (ROUTE_PREFIX) basePath += ROUTE_PREFIX + "/";
+	listsPassPercept(senses) {
+		return senses?.toLowerCase().indexOf(game.i18n.localize("MOBLOKS5E.PerceptionLocator")) > -1;
+	}
+	getPassivePerception() {
+		return game.i18n.format("MOBLOKS5E.PassivePerception", {
+			pp: this.actor.system.skills?.prc?.passive ?? 10
+		});
+	}
 
-			updateData[img.dataset.edit] = img.src.replace(basePath, "");
-		}
-
-		return foundry.utils.flattenObject(
-			foundry.utils.mergeObject(
-				formData.object,
-				updateData
-			)
+	getSwitches(context) {
+		return Object.fromEntries(
+			Object.entries(context.allFlags).map(([, f]) => [f.name, {
+				enable: game.i18n.localize(`MOBLOKS5E.${f.name}.enable`),
+				disable: game.i18n.localize(`MOBLOKS5E.${f.name}.disable`)
+			}])
 		);
 	}
-	handleSpecial(key, value) {
-		switch (key) {
-			case "system.details.cr": {
-				if (value.indexOf("/") > -1) {
-					let cr = { "1/8": 0.125, "1/4": 0.25, "1/2": 0.5 }[value];
-					return cr != undefined ? cr : value;
-				}
-				break;
-			}
-		}
 
-		return value;
+	/** @override */
+	async _preFirstRender(context, options) {
+		await super._preFirstRender(context, options);
+		await this.constructor.preLoadTemplates();
 	}
-	async addFeature(event) {
-		let type = event.currentTarget.dataset.type == "spell" ? "spell" : "item";
-		let item = (await this._onItemCreate(event))[0];
 
-		let id = item.id;
-		if (type == "item") this.openItemEditor(event, id);
-		else this.openSpellEditor(event, id);
+	/** @override */
+	async _onFirstRender(context, options) {
+		await super._onFirstRender(context, options);
+
+		// Close any open menus when clicking elsewhere on the sheet.
+		this.element.addEventListener("click", () => {
+			Object.values(this.menuTrees).forEach(m => m.close());
+		});
 	}
+
+	/** @override */
+	async _onRender(context, options) {
+		await super._onRender(context, options);
+
+		this.applyTheme();
+		this.setWindowClasses();
+		this.applyFontSize();
+		this.activateListeners(this.element);
+		this.fitToContent();
+
+		// Fonts, images and the window frame may still be settling on the first render, so fit again once they have.
+		requestAnimationFrame(() => this.fitToContent());
+	}
+
+	/**
+	 * Re-size the window to fit the stat block columns.
+	 */
+	fitToContent() {
+		if (this.minimized) return;
+		if (!this.element?.isConnected) return;
+		if (this.element.closest(".grid-cell-content")) return;	// GM Screen compatibility
+
+		const popup = new PopupHandler(
+			this, 							// The Application window
+			".monsterblock-body",
+			this.options.position.width,	// From default options
+			window.innerHeight - game.settings.get("monsterblock", "max-height-offset"),	// Configurable offset, default is 72 to give space for the macro bar and 10px of padding.
+			8,								// The margins on the window content are 8px
+			this.flags.scale
+		);
+		popup.fix();
+	}
+
+	/* -------------------------------------------- */
+	/*  Menus                                       */
+	/* -------------------------------------------- */
+
 	prepMenus() {
+		this.menus = [];
 		this.menuTrees = {
 			attributes: this.prepAttributeMenu(),
 			features: this.prepFeaturesMenu(),
@@ -252,20 +595,12 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 	prepFeaturesMenu() {
 		let featMenu = this.addMenu("monster-features", `<i class="fa fa-plus"></i>`, undefined, undefined, ".main-section", "menu-active");
 
-		featMenu.add(this.createFeatureAdder({ type: "feat" }, "MOBLOKS5E.AddFeat"));
-		featMenu.add(this.createFeatureAdder({
-			"type": "weapon",
-			"activation.type": "action",
-			"weapon-type": "natural",
-			"action-type": "mwak",
-			"target.value": "1",
-			"range.value": "5",
-			"range.units": "ft"
-		}, "MOBLOKS5E.AddAttack"));
-		featMenu.add(this.createFeatureAdder({ type: "feat", "activation.type": "action" }, "MOBLOKS5E.AddAct"));
-		featMenu.add(this.createFeatureAdder({ type: "spell", "level": "0" }, "MOBLOKS5E.AddSpell"));
-		featMenu.add(this.createFeatureAdder({ type: "loot" }, "MOBLOKS5E.AddInventory"));
-		featMenu.add(this.createFeatureAdder({ type: "consumable" }, "MOBLOKS5E.AddConsumable"));
+		featMenu.add(this.createFeatureAdder("feat", "MOBLOKS5E.AddFeat"));
+		featMenu.add(this.createFeatureAdder("attack", "MOBLOKS5E.AddAttack"));
+		featMenu.add(this.createFeatureAdder("action", "MOBLOKS5E.AddAct"));
+		featMenu.add(this.createFeatureAdder("spell", "MOBLOKS5E.AddSpell"));
+		featMenu.add(this.createFeatureAdder("loot", "MOBLOKS5E.AddInventory"));
+		featMenu.add(this.createFeatureAdder("consumable", "MOBLOKS5E.AddConsumable"));
 
 		if (window.QuickInsert) {
 			featMenu.add(new MenuItem("trigger", {
@@ -277,10 +612,10 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 
 		return featMenu;
 	}
-	createFeatureAdder(data, label) {
+	createFeatureAdder(preset, label) {
 		return new MenuItem("trigger", {
 			control: "addFeature",
-			data: data,
+			data: { preset },
 			icon: `<i class="fa fa-plus"></i>`,
 			label: game.i18n.localize(label)
 		});
@@ -291,7 +626,7 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 			restrictTypes: ["Item"],
 			onSubmit: async (item) => {
 				const theItem = await fromUuid(item.uuid);
-				this.actor.createEmbeddedDocuments("Item", [theItem]);
+				this.actor.createEmbeddedDocuments("Item", [theItem.toObject()]);
 			}
 		});
 	}
@@ -305,10 +640,10 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 
 		attrMenu.add(this.prepareSavingThrowsMenu(attrMenu));
 		attrMenu.add(this.prepSkillsMenu(attrMenu));
-		attrMenu.add(this.prepDamageTypeMenu("dv", "DND5E.DamVuln", attrMenu));
-		attrMenu.add(this.prepDamageTypeMenu("dr", "DND5E.DamRes", attrMenu));
-		attrMenu.add(this.prepDamageTypeMenu("di", "DND5E.DamImm", attrMenu));
-		attrMenu.add(this.prepConditionTypeMenu("ci", "DND5E.ConImm", attrMenu));
+		attrMenu.add(this.prepDamageTypeMenu("dv", "DND5E.TRAIT.Damage.Vulnerability.title", attrMenu));
+		attrMenu.add(this.prepDamageTypeMenu("dr", "DND5E.TRAIT.Damage.Resistance.title", attrMenu));
+		attrMenu.add(this.prepDamageTypeMenu("di", "DND5E.TRAIT.Damage.Immunity.title", attrMenu));
+		attrMenu.add(this.prepConditionTypeMenu("ci", "DND5E.TRAIT.Condition.Immunity.title", attrMenu));
 		attrMenu.add(this.prepLanguageMenu("languages", "DND5E.Languages", attrMenu));
 
 		return attrMenu;
@@ -319,9 +654,9 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 		Object.entries(this.actor.system.abilities).forEach(([ab, ability]) => {
 			let flag = Boolean(ability.proficient);
 			menu.add(new MenuItem("save-toggle", {
-				name: CONFIG.DND5E.abilities[ab].label,
+				name: CONFIG.DND5E.abilities[ab]?.label ?? ab,
 				flag, d: ab,
-				target: `data.abilities.${ab}.proficient`,
+				target: `system.abilities.${ab}.proficient`,
 				icon: flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>'
 			}, (m) => {
 				m.flag = Boolean(this.actor.system.abilities[ab]?.proficient);
@@ -334,14 +669,23 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 	prepSkillsMenu(attrMenu) {
 		let menu = this.addMenu("skills", game.i18n.localize("MOBLOKS5E.SkillS"), attrMenu);
 
-		Object.entries(this.actor.system.skills).forEach(([id, skill]) => {
-			skill.abilityAbbr = game.i18n.localize(`MOBLOKS5E.Abbr${skill.ability}`);
-			skill.icon = this._getProficiencyIcon(skill.value);
-			skill.hover = CONFIG.DND5E.proficiencyLevels[skill.value];
-			skill.label = CONFIG.DND5E.skills[id].label;
+		Object.entries(this.actor.system.skills ?? {}).forEach(([id, skillData]) => {
+			if (!(id in CONFIG.DND5E.skills)) return;
+			const skill = {
+				ability: skillData.ability,
+				value: skillData.value,
+				abilityAbbr: game.i18n.localize(`MOBLOKS5E.Abbr${skillData.ability}`),
+				icon: this._getProficiencyIcon(skillData.value),
+				hover: CONFIG.DND5E.proficiencyLevels[skillData.value],
+				label: CONFIG.DND5E.skills[id].label
+			};
 			menu.add(new MenuItem("skill", { id, skill }, (m, data) => {
-				m.skill.icon = data.skills[m.id].icon,
-				m.skill.value = data.skills[m.id].value
+				const current = data.skills[m.id];
+				if (!current) return;
+				m.skill.icon = current.icon;
+				m.skill.value = current.value;
+				m.skill.hover = current.hover;
+				m.skill.abilityAbbr = current.abilityAbbr;
 			}));
 		});
 
@@ -360,46 +704,26 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 	}
 	prepConditionTypeMenu(id, label, attrMenu) {
 		let menu = this.addMenu(id, game.i18n.localize(label), attrMenu);
-		this.getTraitChecklist(id, menu, `system.traits.${id}`, "condition-type", CONFIG.DND5E.conditionTypes);
+		const conditions = Object.fromEntries(Object.entries(CONFIG.DND5E.conditionTypes).filter(([, c]) => !c.pseudo));
+		this.getTraitChecklist(id, menu, `system.traits.${id}`, "condition-type", conditions);
 		return menu;
 	}
 
-	updateConditionImmunities(data) {
-		const trait = data.system.traits.ci;
-		if (!trait) return;
-		const values = trait.value || new Set();
-		trait.selected = values;
-		trait.visible = values.size > 0;
-	}
-
 	/**
-	 * Re-localizes the text for damage resistances, immunities, and vulnerabilities
-	 * to match the working in the books.
+	 * Check if a trait on the actor contains a value.
 	 *
-	 * @memberof MonsterBlock5e
+	 * @param {string} id  - The id of the trait
+	 * @param {string} key - The value to check
+	 * @return {boolean}
 	 */
-	updateDamageImmunityResistanceVulnerabilityText(data) {
-		["di", "dr", "dv"].forEach(damageSet => {
-			const trait = data.system.traits[damageSet];
-			if (!trait) return;
-			const damageTypes = trait.value;
-			if (!damageTypes) {
-				trait.visible = false;
-			};
-
-			let regularTypes = new Set(damageTypes);
-
-			const bypasses = trait.bypasses ?? new Set();
-			if (damageTypes.has("bludgeoning") && damageTypes.has("piercing") && damageTypes.has("slashing") && bypasses.size > 0) {
-				regularTypes.delete("bludgeoning");
-				regularTypes.delete("piercing");
-				regularTypes.delete("slashing");
-				trait.physical = game.i18n.localize("MOBLOKS5E.physicalDamage");
-			}
-			trait.selected = regularTypes;
-			trait.visible = trait.physical || regularTypes.size > 0;
-		});
+	traitHas(id, key) {
+		const value = this.actor.system.traits?.[id]?.value;
+		if (!value) return false;
+		if (value instanceof Set) return value.has(key);
+		if (Array.isArray(value)) return value.includes(key);
+		return false;
 	}
+
 	/**
 	 * This method creates MenuItems and populates the target menu for trait lists.
 	 *
@@ -411,28 +735,17 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 	 * @memberof MonsterBlock5e
 	 */
 	getTraitChecklist(id, menu, target, itemType, traitList) {
+		const labelOf = (data) => game.i18n.localize(typeof data === "string" ? data : (data?.label ?? data?.name ?? ""));
 		Object.entries(traitList).forEach(([d, traitData]) => {
-			// Languages has children for each subgroup of languages.
-			if (traitData.children) {
-				Object.entries(traitData.children).forEach(([key, label]) => {
-					let flag = this.actor.system.traits[id].value.has(d);
-					menu.add(new MenuItem(itemType, {
-						d: key, name: label, flag,
-						target: target,
-						icon: flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>'
-					}, (m) => {
-						m.flag = this.actor.system.traits[id].value.has(d);
-						m.icon = m.flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>';
-					}));
-				});
-			} else {
-				let flag = this.actor.system.traits[id].value.has(d);
+			const entries = traitData?.children ? Object.entries(traitData.children) : [[d, traitData]];
+			for (const [key, data] of entries) {
+				let flag = this.traitHas(id, key);
 				menu.add(new MenuItem(itemType, {
-					d, name: traitData.label, flag,
+					d: key, name: labelOf(data), flag,
 					target: target,
 					icon: flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>'
 				}, (m) => {
-					m.flag = this.actor.system.traits[id].value.has(d);
+					m.flag = this.traitHas(id, key);
 					m.icon = m.flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>';
 				}));
 			}
@@ -440,97 +753,93 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 
 		menu.add(new MenuItem("custom-val", {
 			d: "custom",
-			name: game.i18n.localize("DND5E.TraitSelectorSpecial"),
+			name: game.i18n.localize("DND5E.Special"),
 			target: target + ".custom",
 			icon: "",
-			value: this.actor.system.traits[id].custom
+			value: this.actor.system.traits[id]?.custom ?? ""
 		}, (m) => {
-				m.value = this.actor.system.traits[id].custom;
+			m.value = this.actor.system.traits[id]?.custom ?? "";
 		}));
 	}
 	/**
-	 * This method creates MenuItems and populates the target menu for trait lists.
+	 * This method creates MenuItems and populates the target menu for languages,
+	 * which may be nested in groups.
 	 *
 	 * @param {String} id - The id of the data attribute
 	 * @param {MenuTree} menu - The parent menu
 	 * @param {String} target - The data attribute target
 	 * @param {String} itemType - The type of item
 	 * @param {Object} traitList - The CONFIG.System.List of trait options.
+	 * @param {Boolean} skipCustom - Don't add the "custom" field
 	 * @memberof MonsterBlock5e
 	 */
 	getLanguageChecklist(id, menu, target, itemType, traitList, skipCustom = false) {
 		Object.entries(traitList).forEach(([d, traitData]) => {
-			// Languages has children for each subgroup of languages.
-			if (traitData.children) {
-				this.getLanguageChecklist(id, menu, target, itemType, traitData.children, true);
-			} else {
-				let flag = this.actor.system.traits[id].value.has(d);
+			const isObject = typeof traitData === "object" && traitData !== null;
+			const selectable = !isObject || (traitData.selectable !== false);
+
+			// Languages have children for each subgroup of languages.
+			if (selectable) {
+				let flag = this.traitHas(id, d);
 				menu.add(new MenuItem(itemType, {
-					d, name: traitData, flag,
+					d, name: game.i18n.localize(isObject ? traitData.label : traitData), flag,
 					target: target,
 					icon: flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>'
 				}, (m) => {
-					m.flag = this.actor.system.traits[id].value.has(d);
+					m.flag = this.traitHas(id, d);
 					m.icon = m.flag ? '<i class="fas fa-check"></i>' : '<i class="far fa-circle"></i>';
 				}));
+			}
+			if (isObject && traitData.children) {
+				this.getLanguageChecklist(id, menu, target, itemType, traitData.children, true);
 			}
 		});
 
 		if (!skipCustom) {
 			menu.add(new MenuItem("custom-val", {
 				d: "custom",
-				name: game.i18n.localize("DND5E.TraitSelectorSpecial"),
+				name: game.i18n.localize("DND5E.Special"),
 				target: target + ".custom",
 				icon: "",
-				value: this.actor.system.traits[id].custom
+				value: this.actor.system.traits[id]?.custom ?? ""
 			}, (m) => {
-					m.value = this.actor.system.traits[id].custom;
+					m.value = this.actor.system.traits[id]?.custom ?? "";
 			}));
 		}
+	}
+
+	_getProficiencyIcon(level) {
+		return PROFICIENCY_ICONS[level] ?? PROFICIENCY_ICONS[0];
 	}
 
 	hasSaveProfs() {
 		return Object.values(this.actor.system.abilities)?.some(ability => ability.proficient);
 	}
 	hasSkills() {
-		return Object.values(this.actor.system.abilities)?.some(skill => skill.value);
+		return Object.values(this.actor.system.skills ?? {})?.some(skill => skill.value);
 	}
 	hasAtWillSpells() {	// Some normal casters also have a few spells that they can cast "At will"
 		return this.actor.items.some((item) => {
-			return item.system.preparation?.mode === "atwill";
+			return item.type === "spell" && item.system.method === "atwill";
 		});
 	}
 	hasBonusActions() {
-		return this.actor.items.some((item) => {
-			return this.constructor.isBonusAction(item);
-		});
+		return this.actor.items.some((item) => this.constructor.isBonusAction(item));
 	}
 	hasReactions() {
-		return this.actor.items.some((item) => {
-			return this.constructor.isReaction(item)
-		});
+		return this.actor.items.some((item) => this.constructor.isReaction(item));
 	}
 	hasLair() {
-		return this.actor.items.some((item) => {
-			return this.constructor.isLairAction(item)
-		});
+		return this.actor.items.some((item) => this.constructor.isLairAction(item));
 	}
 	hasLegendaryActions() {
-		return this.actor.items.some((item) => {
-			return this.constructor.isLegendaryAction(item)
-		});
+		return this.actor.items.some((item) => this.constructor.isLegendaryAction(item));
 	}
-	async openTokenizer() {
-		/* global Tokenizer */
-		if (window.Tokenizer) {
-			window.Tokenizer.tokenizeActor(this.object);
-		}
-	}
-	async resetDefaults() {
-		await this.setCurrentTheme(game.settings.get("monsterblock", "default-theme"));
-		this.actor.update({"flags.monsterblock": this.defaultFlags});
-	}
-	static prop = "A String";
+
+	/* -------------------------------------------- */
+	/*  Themes & Appearance                         */
+	/* -------------------------------------------- */
+
 	static themes = {
 		"default": { name: "MOBLOKS5E.DefaultThemeName", class: "default-theme" },
 		"foundry": { name: "MOBLOKS5E.FoundryThemeName", class: "foundry-theme" },
@@ -542,349 +851,250 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 		"custom":  { name: "MOBLOKS5E.CustomThemeName", class: "" }
 	}
 	get themes() {
-		if (this._themes) return this._themes;
-
-		this._themes = MonsterBlock5e.themes;
-		this._themes.custom = { name: "MOBLOKS5E.CustomThemeName", class: this.flagManager.flags["custom-theme-class"] };
-		return this._themes;
+		const themes = foundry.utils.deepClone(MonsterBlock5e.themes);
+		themes.custom.class = this.flags["custom-theme-class"] ?? "";
+		return themes;
 	}
 	get currentTheme() {
-		return this.flags["theme-choice"];
+		const theme = this.flags["theme-choice"];
+		return theme in MonsterBlock5e.themes ? theme : "default";
 	}
 	set currentTheme(t) {
 		this.setCurrentTheme(t);
 	}
 	async setCurrentTheme(theme) {
 		if (!(theme in this.themes)) return this.currentTheme;
-		let oldTheme = this.themes[this.currentTheme];
-		let newTheme = this.themes[theme];
+		const result = await Flags.setFlag(this.flagManager, "theme-choice", theme);
+		this.applyTheme(theme);
+		return result;
+	}
 
-		this.element.removeClass(oldTheme.class);
-		this.element.addClass(newTheme.class);
-
-		let classes = this.options.classes;
-		classes[classes.indexOf(oldTheme.class)] = newTheme.class;
-
-		return await Flags.setFlag(this.flagManager, "theme-choice", theme);
+	/**
+	 * Apply the class for the current theme to the window, removing any other theme class.
+	 *
+	 * @param {string} [theme]
+	 */
+	applyTheme(theme = this.currentTheme) {
+		if (!this.element) return;
+		const themes = this.themes;
+		for (const t of Object.values(themes)) {
+			for (const cls of String(t.class ?? "").split(/\s+/).filter(c => c)) this.element.classList.remove(cls);
+		}
+		for (const cls of String(themes[theme]?.class ?? "").split(/\s+/).filter(c => c)) this.element.classList.add(cls);
 	}
 
 	async pickTheme(event) {
 		let value = event.currentTarget.dataset.value;
 
 		if (value == "custom") {
-			await this.setCurrentTheme("default");
-			const className = event.currentTarget.nextElementSibling.value;
-			this.themes.custom.class = className;
+			const className = event.currentTarget.nextElementSibling?.value ?? "";
 			await Flags.setFlag(this.flagManager, "custom-theme-class", className);
 		}
 
-		this.setCurrentTheme(value);
+		return this.setCurrentTheme(value);
 	}
 	async setFontSize(event) {
 		const value = parseFloat(event.currentTarget.nextElementSibling.value);
 
 		if (isNaN(value)) {
-			ui.notifications.error(game.i18n.localize("MOBLOK5E.font-size.NaN-error"));
-			throw new Error(game.i18n.localize("MOBLOK5E.font-size.NaN-error"));
+			ui.notifications.error(game.i18n.localize("MOBLOKS5E.font-size.NaN-error"));
+			throw new Error(game.i18n.localize("MOBLOKS5E.font-size.NaN-error"));
 		}
 
-		await Flags.setFlag(this.flagManager, "font-size", value)
+		await Flags.setFlag(this.flagManager, "font-size", value);
 	}
 
-	_prepareItems(data) {
-		return new ItemPrep(this, data);
-	}
-	listsPassPercept(senses) {
-		return senses?.toLowerCase().indexOf(game.i18n.localize("MOBLOKS5E.PerceptionLocator")) > -1;
-	}
-	getPassivePerception() {
-		return game.i18n.format("MOBLOKS5E.PassivePerception", {
-			pp: this.actor.system.skills.prc.passive
+	setWindowClasses() {
+		const outer = this.element;
+		if (!outer) return;
+
+		const miniBlockFlags = [
+			"compact-window",
+			"compact-layout",
+			"compact-feats"
+		];
+
+		miniBlockFlags.forEach(flag => {
+			outer.classList.toggle(flag, Boolean(this.flags[flag]));
 		});
 	}
-	prepAbilities(data) {
-		Object.entries(data.abilities)?.forEach(
-			([id, ability]) => ability.abbr = game.i18n.localize("MOBLOKS5E.Abbr" + id)
-		)
-	}
-	/**
-	 * @typedef moveData
-	 * A set of data about a movement speed
-	 * used to generate the text to display on the sheet.
-	 *
-	 * @property {string} name - The name of the movement type
-	 * @property {Boolean} showLabel - True if the label should be shown, otherwise the label is hidden.
-	 * @property {string} label - The label for this movement speed, should not be capitalized
-	 * @property {number|string} value - The speed, if zero this is set to an empty string so that nothing is displayed
-	 * @property {string} unit - The unit these measurements are in, typically an abbreviation ending in a character like a period
-	 * @property {string} key - The data-field-key, the dot syntax idnetifier for the data this field mutates
-	 */
-	/**
-	 * Prepares a new `movement` property on data
-	 * containing information needed to format the
-	 * various movements speeds on the sheet.
-	 *
-	 * @param {object} data - The data object returned by this.getData() for the template.
-	 * @memberof MonsterBlock5e
-	 */
-	prepMovement(data) {
-		const moveTpyes = ["walk", "burrow", "climb", "fly", "swim"];
-		/** @type moveData[] */
-		const movement = [];
-		const hover = data.system.attributes.movement.hover;
-
-		for (let move of moveTpyes) {
-			const speed = data.system.attributes.movement[move];
-
-			let moveName = move;
-			const moveNameCaps = moveName.replace(moveName[0], moveName[0].toUpperCase());
-
-			movement.push({
-				name: move,
-				fly: move == "fly",
-				showLabel: move != "walk",
-				label: game.i18n.localize(`DND5E.Movement${moveNameCaps}`).toLowerCase(),
-				value: speed > 0 ? speed : move != "walk" ? "" : "0",
-				unit: (data.system.attributes.movement.units ?? Object.keys(CONFIG.DND5E.movementUnits)[0]) + game.i18n.localize("MOBLOKS5E.SpeedUnitAbbrEnd"),
-				key: `system.attributes.movement.${move}`
-			});
-		}
-
-		data.movement = movement.filter(m => m.value || m.name == "walk");
+	applyFontSize() {
+		const outer = this.element;
+		if (!outer) return;
+		const size = this.flags["font-size"] || parseFloat(window.getComputedStyle(document.body).fontSize);
+		outer.style.fontSize = `${size}px`;
 	}
 
-	/**
-	 * @typedef senseData
-	 * A set of data about a sense
-	 * used to generate the text to display on the sheet.
-	 *
-	 * @property {string} name - The name of the sense type
-	 * @property {string} label - The label for this sense, should not be capitalized
-	 * @property {number|string} value - The sense, if zero this is set to an empty string so that nothing is displayed
-	 * @property {string} unit - The unit these measurements are in, typically an abbreviation ending in a character like a period
-	 * @property {string} key - The data-field-key, the dot syntax idnetifier for the data this field mutates
-	 */
-	/**
-	 * Prepares a new `senses` property on data
-	 * containing information needed to format the
-	 * various senses speeds on the sheet.
-	 *
-	 * @param {object} data - The data object returned by this.getData() for the template.
-	 * @memberof MonsterBlock5e
-	 */
-	prepSenses(data) {
-		const senseTypes = ["blindsight", "darkvision", "tremorsense", "truesight", "special"];
-		/** @type senseData[] */
-		const senses = [];
+	/* -------------------------------------------- */
+	/*  Sheet switching                             */
+	/* -------------------------------------------- */
 
-		for (let sense of senseTypes) {
-			const range = data.system.attributes.senses[sense];
-
-			let senseName = sense;
-			const senseNameCaps = senseName.replace(senseName[0], senseName[0].toUpperCase());
-
-			senses.push({
-				name: sense,
-				label: game.i18n.localize(`DND5E.Sense${senseNameCaps}`).toLowerCase(),
-				value: sense == "special" ? range : range > 0 ? range : "",
-				unit: (data.system.attributes.senses.units ?? Object.keys(CONFIG.DND5E.movementUnits)[0]) + game.i18n.localize("MOBLOKS5E.SpeedUnitAbbrEnd"),
-				key: `system.attributes.senses.${sense}`
-			});
+	async openTokenizer() {
+		/* global Tokenizer */
+		if (window.Tokenizer) {
+			window.Tokenizer.tokenizeActor(this.actor);
 		}
-
-		const special = senses.pop();
-		data.senses = senses.filter(s => s.value);
-		data.specialSenses = {
-			passivePerception: this.getPassivePerception(),
-			special
-		}
+	}
+	async resetDefaults() {
+		await this.setCurrentTheme(game.settings.get("monsterblock", "default-theme"));
+		return this.actor.update({ "flags.monsterblock": this.defaultFlags });
 	}
 
 	async switchToDefault() {
-		const config = CONFIG[this.object.documentName];
-		const type = this.object.type;
-		const classes = Object.values(config.sheetClasses[type]);
-		let defcls = classes.find(c => c.default).id;
+		const DocumentSheetConfig = foundry.applications.apps.DocumentSheetConfig;
+		let defcls = DocumentSheetConfig.getSheetClassesForSubType?.("Actor", this.actor.type)?.defaultClass;
 
 		// When Monster Blocks *is* the default, use the system default instead.
-		if (defcls == "dnd5e.MonsterBlock5e") defcls = "dnd5e.ActorSheet5eNPC";
+		if (!defcls || defcls == SHEET_ID) defcls = DEFAULT_NPC_SHEET_ID;
 
-		return await this.constructor.switchSheetTo(defcls, this);
-	}
-	static async switchSheetTo(sheetClass, that) {
-		const sheet = that.object.sheet;
-		await sheet.close();
-		that.object._sheet = null;
-		delete that.object.apps[sheet.appId];
-
-		await that.object.setFlag("core", "sheetClass", sheetClass);
-
-		return that.object.sheet.render(true)
+		return this.constructor.switchSheetTo(defcls, this.actor);
 	}
 
-	getSwitches(data) {
-		return Object.fromEntries(
-			Object.entries(data.allFlags).map(([k,f]) => [f.name, {
-					enable: game.i18n.localize(`MOBLOKS5E.${f.name}.enable`),
-					disable: game.i18n.localize(`MOBLOKS5E.${f.name}.disable`)
-			}])
-		);
+	/**
+	 * Change the sheet used by an actor.
+	 *
+	 * @param {string} sheetClass  - The registered id of the sheet class
+	 * @param {Actor5e|object} actorOrSheet - The actor, or a sheet for the actor
+	 * @return {Promise}
+	 */
+	static async switchSheetTo(sheetClass, actorOrSheet) {
+		const actor = actorOrSheet?.documentName === "Actor" ? actorOrSheet : (actorOrSheet?.actor ?? actorOrSheet?.document);
+		if (!actor) return;
+
+		if (actor.pack || !actor.isOwner) {
+			ui.notifications.warn(game.i18n.localize("MOBLOKS5E.CannotSwitchSheet"));
+			return;
+		}
+
+		// Updating the core sheetClass flag makes Foundry close the current sheet and open the new one.
+		return actor.setFlag("core", "sheetClass", sheetClass);
 	}
 
 	static async getQuickInserts() {
-		if (game.data.modules.find(m => m.id == "quick-insert")?.active) {
-			let { CharacterSheetContext, dnd5eFilters } = await import("../../../quick-insert/quick-insert.js");
-			Object.assign(this, { CharacterSheetContext, dnd5eFilters });
-		}
-		else {
-			this.CharacterSheetContext = false;
-		}
+		this.CharacterSheetContext = false;
 	}
-	async activateListeners(html) {	// We need listeners to provide interaction.
-		this.setWindowClasses(html);
-		this.applyFontSize(html);
 
-		html.find(".collapse-switch").click((event) => {
+	/* -------------------------------------------- */
+	/*  Event Listeners                             */
+	/* -------------------------------------------- */
+
+	/**
+	 * Attach event listeners to the rendered sheet.
+	 *
+	 * @param {HTMLElement} html
+	 */
+	activateListeners(html) {
+		const on = (selector, event, handler) => {
+			html.querySelectorAll(selector).forEach(el => el.addEventListener(event, (ev) => {
+				// Mimic jQuery: make `currentTarget` point at the element the listener was bound to.
+				Object.defineProperty(ev, "currentTarget", { value: el, configurable: true });
+				return handler.call(this, ev);
+			}));
+		};
+
+		on(".collapse-switch", "click", (event) => {
 			event.preventDefault();
 
 			const section = event.currentTarget.dataset.section;
-			const collapsed = this.flagManager.flags.collapsed;
+			const collapsed = foundry.utils.deepClone(this.flagManager.flags.collapsed ?? {});
 
 			collapsed[section] = !collapsed[section];
 
 			this.flags.collapsed = collapsed;
 		});
-		html.find(".switch").click((event) => {							// Switches are the primary way that settings are applied per-actor.
+		on(".switch", "click", (event) => {							// Switches are the primary way that settings are applied per-actor.
 			event.preventDefault();
 			let control = event.currentTarget.dataset.control;			// A data attribute is used on an element with the class .switch, and it contains the name of the switch to toggle.
 
 			let state = !this.flagManager.flags[control];	            // Get the current setting of this flag, and reverse it.
-			if (debug.enabled) console.debug(`Monster Block | %cSwitching: ${control} to: ${state}`, "color: orange")
+			if (debug.enabled) console.debug(`Monster Block | %cSwitching: ${control} to: ${state}`, "color: orange");
 
 			this.flagManager.flags[control] = state;                    // Set the flag to the new state.
 		});
-		html.find(".trigger").click((event) => {
+		on(".trigger", "click", (event) => {
 			event.preventDefault();
 			let control = event.currentTarget.dataset.control;
 
-			this[control](event);
+			if (typeof this[control] === "function") this[control](event);
 		});
-		html.find(".switch-input").keydown((event) => {
+		on(".switch-input", "keydown", (event) => {
 			if (event.key !== "Enter") return;
 			event.preventDefault();
-			let target = event.currentTarget;
-			let anchor = target.previousElementSibling;
-			event.currentTarget = anchor;
-
-			this[anchor.dataset.control](event);
-		});
-		html.find(".profile-image").click((event) => {
-			event.preventDefault();
-
-			new ImagePopout(this.actor.img, {
-				title: this.actor.name,
-				shareable: true,
-				uuid: this.actor.uuid
-			}).render(true);
-		});
-
-		html.find("[data-roll-formula]").click(async (event) => {			// Universal way to add an element that provides a roll, just add the data attribute "data-roll-formula" with a formula in it, and this applies.
-			event.preventDefault();									// This handler makes "quick rolls" possible, it just takes some data stored on the HTML element, and rolls dice directly.
 			event.stopPropagation();
+			let anchor = event.currentTarget.previousElementSibling;
+			Object.defineProperty(event, "currentTarget", { value: anchor, configurable: true });
 
-			const formula = event.currentTarget.dataset.rollFormula;
-			const target = event.currentTarget.dataset.rollTarget;
-			const success = event.currentTarget.dataset.rollSuccess;
-			const failure = event.currentTarget.dataset.rollFailure;
-			const handler = event.currentTarget.dataset.rollHandler;
-			let flavor = event.currentTarget.dataset.rollFlavor;	// Optionally, you can include data-roll-flavor to add text to the message.
-
-			let roll;
-			try {
-				roll = new Roll(formula);
-				await roll.roll({ async: true });
-			}
-			catch (e) {
-				console.error(e);
-				ui.notifications.error(e);
-				roll = new Roll("0");
-				await roll.roll({ async: true });
-			}
-
-			if (target) {
-				let s = roll.total >= parseInt(target, 10);
-				if (handler) this[handler](s, event);
-
-				flavor += `<span style="font-weight: bold; color: ${s ? "green" : "red"};">${s ? success : failure}</span>`;
-			}
-
-			roll.toMessage({					// Creates a new Roll, rolls it, and sends the result as a message
-				flavor: flavor,										// Including the text as defined
-				speaker: ChatMessage.getSpeaker({actor: this.actor})// And setting the speaker to the actor this sheet represents
-			});
+			if (typeof this[anchor.dataset.control] === "function") this[anchor.dataset.control](event);
 		});
+		// The text inputs in the cog menu are not part of the document, don't submit the form for them.
+		on(".switch-input", "change", (event) => event.stopPropagation());
+
+		on(".profile-image img", "click", (event) => {
+			event.preventDefault();
+			this.showImage(event.currentTarget.getAttribute("src"));
+		});
+
+		on("[data-roll-formula]", "click", this._onQuickRoll);
 
 		// Special Roll Handlers
-		html.find(".ability").click(async (event) => {
+		on(".ability", "click", async (event) => {
+			if (event.target.closest(".config-button, [contenteditable=true]")) return;
 			event.preventDefault();
-			let ability = event.currentTarget.dataset.ability;
-
-			if (window.BetterRolls) window.BetterRolls.rollCheck(this.actor, ability, { event });
-			else this.actor.rollAbilityTest(ability, {event: event});
+			const ability = event.currentTarget.dataset.ability;
+			return this.actor.rollAbilityCheck({ ability, event });
 		});
-		html.find(".saving-throw").click(async (event) => {
+		on(".saving-throw", "click", async (event) => {
 			event.preventDefault();
-			let ability = event.currentTarget.dataset.ability;
-
-			if (window.BetterRolls) window.BetterRolls.rollSave(this.actor, ability, { event });
-			else this.actor.rollAbilitySave(ability, {event: event});
+			const ability = event.currentTarget.dataset.ability;
+			return this.actor.rollSavingThrow({ ability, event });
 		});
-		html.find(".skill").click(async (event) => {
+		on(".skill", "click", async (event) => {
 			event.preventDefault();
-			let skill = event.currentTarget.dataset.skill;
-			if (window.BetterRolls) window.BetterRolls.rollSkill(this.actor, skill, { event });
-			else this.actor.rollSkill(skill, {event: event});
+			const skill = event.currentTarget.dataset.skill;
+			return this.actor.rollSkill({ skill, event });
 		});
 
-		// Item and spell "roll" handlers. Really just pops their chat card into chat, allowing for rolling from there.
-		html.find(".item-name, .spell").click(async (event) => {
+		// Item and spell "roll" handlers. Pops their chat card into chat, allowing for rolling from there.
+		on(".item-name, .spell", "click", async (event) => {
+			if (event.target.closest(".delete-item, [contenteditable=true]")) return;
 			event.preventDefault();
 			event.stopPropagation();
 			let id = event.currentTarget.dataset.itemId;
 			const item = this.actor.items.get(id);
-			if (window.BetterRolls) {
-				const preset = event.altKey ? 1 : 0;
-				window.BetterRolls.rollItem(item, { event, preset }).toMessage();
-			}
-			else return item.use({legacy: !isDndV4OrNewer()}); // Conveniently, items have all this logic built in already.
+			return item?.use({ event });
 		});
 
-		// uses the built in attack roll from the item
-		html.find(".item-attackRoll").click(async (event) => {
+		// Uses the built in attack roll from the item's attack activity
+		on(".item-attackRoll", "click", async (event) => {
 			event.preventDefault();
+			event.stopPropagation();
 			document.getSelection().removeAllRanges();
 
 			const item = this.actor.items.get(event.currentTarget.dataset.itemId);
-
-			item.rollAttack({event});
+			const activity = getActivity(item, "attack");
+			return activity?.rollAttack({ event });
 		});
 
-		// uses the built in damage roll from the item
-		html.find(".item-damageRoll").click(async (event) => {
+		// Uses the built in damage roll from the item's attack activity
+		on(".item-damageRoll", "click", async (event) => {
 			event.preventDefault();
+			event.stopPropagation();
 			document.getSelection().removeAllRanges();
 
-			const versatile = event.currentTarget.dataset.versatile;
+			const versatile = event.currentTarget.dataset.versatile === "true";
 			const item = this.actor.items.get(event.currentTarget.dataset.itemId);
-
-			item.rollDamage({event, versatile});
-		})
+			const activity = getActivity(item, "attack")
+				?? getActivities(item).find(a => typeof a.rollDamage === "function");
+			const config = { event };
+			if (versatile) config.attackMode = "twoHanded";
+			return activity?.rollDamage(config);
+		});
 
 		// Item editing handlers. Allows right clicking on the description of any item (features, action, etc.) to open its own sheet to edit.
-		html.find(".item").contextmenu(this.openItemEditor.bind(this));
-		html.find(".spell").contextmenu(this.openSpellEditor.bind(this));
+		on(".item", "contextmenu", this.openItemEditor);
+		on(".spell", "contextmenu", this.openSpellEditor);
 
-		html.find(".select-field").click((event) => {
+		on(".select-field", "click", (event) => {
 			let control = event.currentTarget;
 			let selection = event.target;
 			let value = selection.dataset.selectionValue;
@@ -894,88 +1104,132 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 			label.innerText = selection.innerText;
 			control.dataset.selectedValue = value;
 
-			this._onChangeInput(event);
+			const key = control.dataset.selectKey;
+			return this.actor.update({ [key]: value });
 		});
-		html.find("[contenteditable=true]").click((event) => {
-			event.stopPropagation();
-		})
-		html.find("[contenteditable=true]").keydown((event) => {
-			//let el = event.currentTarget;
 
-			switch (event.key) {
-				case "Enter": {
-					event.preventDefault();
-					this._onChangeInput(event);
-					break;
-				}
+		on("[contenteditable=true]", "click", (event) => {
+			event.stopPropagation();
+		});
+		on("[contenteditable=true]", "keydown", (event) => {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				event.currentTarget.blur();
 			}
 		});
-		html.find(".toggle-button").click((event) => {
+		on("[contenteditable=true]", "focusin", this._onFocusEditable);
+		on("[contenteditable=true]", "focusout", this._onUnfocusEditable);
+
+		on(".toggle-button", "click", (event) => {
 			const el = event.currentTarget;
-			el.dataset.toggleValue = el.dataset.toggleValue != "true";
-			this._onChangeInput(event);
-		})
-		html.find(".custom-trait input").blur(this.onCustomTraitChange.bind(this));
-		html.find(".custom-trait input").keydown((event) => {
-			if (event.key == "Enter") this.onCustomTraitChange(event);
+			const value = el.dataset.toggleValue != "true";
+			el.dataset.toggleValue = value;
+			return this.actor.update({ [el.dataset.toggleKey]: value });
 		});
 
+		on(".custom-trait input", "keydown", (event) => {
+			if (event.key !== "Enter") return;
+			event.preventDefault();
+			event.currentTarget.blur();
+		});
 
-		html.find("[contenteditable=true]").focusin(this._onFocusEditable.bind(this));
-
-		html.find("[contenteditable=true]").focusout(this._onUnfocusEditable.bind(this));
-		html.find(".trait-selector").contextmenu(this._onTraitSelector.bind(this));
-		html.find(".trait-selector-add").click(this._onTraitSelector.bind(this));
-		html.find("[data-skill-id]").contextmenu(this._onCycleProficiency.bind(this));
-		html.find("[data-skill-id]").click(this._onCycleProficiency.bind(this));
-		html.find("[data-damage-type]").click(this._onToggleDamage.bind(this));
-		html.find("[data-save-toggle]").click(this._onToggleSave.bind(this));
-		html.find("[data-language-opt]").click(this._onToggleLanguage.bind(this));
-		html.find("[data-condition-type]").click(this._onToggleCondition.bind(this));
+		on("[data-skill-id]", "contextmenu", this._onCycleProficiency);
+		on("[data-skill-id]", "click", this._onCycleProficiency);
+		on("[data-damage-type]", "click", this._onToggleDamage);
+		on("[data-save-toggle]", "click", this._onToggleSave);
+		on("[data-language-opt]", "click", this._onToggleLanguage);
+		on("[data-condition-type]", "click", this._onToggleCondition);
 
 		this.menus.forEach(m => m.attachHandler());
 
-		html.find(".menu").click(e => e.stopPropagation());
-		html.click(() => {
-			Object.values(this.menuTrees).forEach(m => m.close());
-		});
+		on(".menu", "click", e => e.stopPropagation());
 
-		html.find(".delete-item").click((event) => {
+		on(".delete-item", "click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
 			const el = event.currentTarget;
-			this.actor.deleteEmbeddedDocuments("Item", [el.dataset.itemId]);
+			const item = this.actor.items.get(el.dataset.itemId);
+			return item?.delete();
 		});
-
-		this._dragDrop.forEach(d => d.bind(html[0]));
 
 		if (this.isEditable && this.flags.editing) {
-			// Detect and activate TinyMCE rich text editors
-			html.find(".editor-content[data-edit]").each((i, div) => this._activateEditor(div));
-			html.find("img[data-edit]").contextmenu(ev => this._onEditImage(ev));
-			html.find("token.img[data-edit]").contextmenu(ev => this._onEditImage(ev));
+			on("img[data-edit]", "contextmenu", this._onEditImage);
 		}
 
-		if (!this.lastSelection) this.lastSelection = {};
 		const key    = this.lastSelection.key    ? `[data-field-key="${this.lastSelection.key}"]` : "";
 		const entity = this.lastSelection.entity ? `[data-entity="${this.lastSelection.entity}"]` : "";
-		if (key) this.selectElement(html.find(`${key}${entity}`)[0]);
+		if (key) this.selectElement(html.querySelector(`${key}${entity}`));
 
-		html.find("img[data-edit]").unbind("click");
-		html.find(".editor-content img").click((event) => {
+		on(".description img, .biography img", "click", (event) => {
 			event.preventDefault();
-			let imgSource = event.target.src;
-			new ImagePopout(imgSource, {
-				title: this.actor.name,
-				shareable: true,
-				uuid: this.actor.uuid
-			}).render(true);
+			this.showImage(event.target.src);
 		});
 
-		html.find(".item").click(this.toggleExpanded.bind(this));
+		on(".item", "click", this.toggleExpanded);
 
 		// Configure Special Flags
-		html.find(".config-button").click(this._onConfigMenu.bind(this));
+		on(".config-button", "click", this._onConfigMenu);
+	}
+
+	/**
+	 * Display an image in a popout.
+	 *
+	 * @param {string} src
+	 */
+	showImage(src) {
+		const ImagePopout = foundry.applications.apps.ImagePopout;
+		new ImagePopout({
+			src,
+			uuid: this.actor.uuid,
+			window: { title: this.actor.name }
+		}).render({ force: true });
+	}
+
+	/**
+	 * Universal way to add an element that provides a roll, just add the data attribute "data-roll-formula" with a formula in it.
+	 * This handler makes "quick rolls" possible, it just takes some data stored on the HTML element, and rolls dice directly.
+	 *
+	 * @param {Event} event
+	 */
+	async _onQuickRoll(event) {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const el = event.currentTarget;
+		const { rollFormula: formula, rollTarget: target, rollSuccess: success, rollFailure: failure, rollHandler: handler } = el.dataset;
+		let flavor = el.dataset.rollFlavor ?? "";	// Optionally, you can include data-roll-flavor to add text to the message.
+
+		// Recharge rolls use the system's own handling where available.
+		if (handler === "setCharged") {
+			const item = this.actor.items.get(el.dataset.itemId);
+			const recharge = this.constructor.getRecharge(item);
+			if (recharge?.uses.rollRecharge) {
+				if (!recharge.uses.spent) return ui.notifications.info(`${item.name}: ${game.i18n.localize("DND5E.Charged")}`);
+				return recharge.uses.rollRecharge({ event });
+			}
+		}
+
+		let roll;
+		try {
+			roll = await new Roll(formula, this.actor.getRollData()).evaluate();
+		}
+		catch (e) {
+			console.error(e);
+			ui.notifications.error(e.message ?? e);
+			roll = await new Roll("0").evaluate();
+		}
+
+		if (target) {
+			let s = roll.total >= parseInt(target, 10);
+			if (handler && typeof this[handler] === "function") await this[handler](s, event);
+
+			flavor += `<span style="font-weight: bold; color: ${s ? "green" : "red"};">${s ? success : failure}</span>`;
+		}
+
+		return roll.toMessage({
+			flavor: flavor,
+			speaker: ChatMessage.getSpeaker({ actor: this.actor })
+		});
 	}
 
 	toggleExpanded(event) {
@@ -983,34 +1237,15 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 
 		const element = event.currentTarget;
 		const name = element.querySelector(".item-name");
-		const id = name.dataset.itemId;
+		const id = name?.dataset.itemId;
 
 		const item = this.actor.items.get(id);
+		if (!item) return;
 		const expanded = item.getFlag("monsterblock", "expanded");
 
-		item.setFlag("monsterblock", "expanded", !expanded);
+		return item.setFlag("monsterblock", "expanded", !expanded);
 	}
 
-	setWindowClasses(html) {
-		const outer = html.parents(".monsterblock");
-
-		const miniBlockFlags = [
-		//	"mini-block",
-			"compact-window",
-			"compact-layout",
-			"compact-feats"
-		];
-
-		miniBlockFlags.forEach(flag => {
-			if (this.flags[flag]) outer.addClass(flag);
-			else outer.removeClass(flag);
-		});
-	}
-	applyFontSize(html) {
-		const outer = html.parents(".monsterblock");
-		const size = this.flags["font-size"] || parseFloat(window.getComputedStyle(document.body).fontSize);
-		outer.css("font-size", `${size}px`);
-	}
 	selectInput(event) {
 		let el = event.currentTarget;
 		this.selectElement(el);
@@ -1029,9 +1264,9 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 	openItemEditor(event, d) {
 		event.preventDefault();
 		event.stopPropagation();
-		let id = d ?? event.currentTarget.querySelector(".item-name").dataset.itemId;
+		let id = d ?? event.currentTarget.querySelector(".item-name")?.dataset.itemId;
 		const item = this.actor.items.get(id);
-		item.sheet.render(true);
+		return item?.sheet.render({ force: true });
 	}
 
 	openSpellEditor(event, d) {
@@ -1039,195 +1274,317 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 		event.stopPropagation();
 		let id = d ?? event.currentTarget.dataset.itemId;
 		const item = this.actor.items.get(id);
-		item.sheet.render(true);
+		return item?.sheet.render({ force: true });
 	}
 
-	onCustomTraitChange(event) {
-		let input = event.currentTarget;
-		let target = input.name
-		let value = input.value;
-
-		this._onSubmit(event, { updateData: { [target]: value } })
-	}
-	getTogglesData(html) {
-		let data = {};
-
-		["dv", "dr", "di"].forEach(dg => {
-			let damageTypes = html.find(`[data-damage-type="system.traits.${dg}"]`);
-			let key = `data.traits.${dg}.value`;
-			let value = [];
-			for (let dt of damageTypes) {
-				let state = (dt.dataset.flag == "true");
-				if (state) value.push(dt.dataset.option);
-			}
-			data[key] = value;
-		});
-
-		const traitReducer = (acc, n) => {
-			if (n.dataset.flag == "true") acc.push(n.dataset.option);
-			return acc;
-		}
-		data["system.traits.languages.value"] =
-		[...html.find(`[data-language-opt]`)].reduce(traitReducer, []);
-
-		data["system.traits.ci.value"] =
-		[...html.find(`[data-condition-type]`)].reduce(traitReducer, []);
-
-		return data;
-	}
 	_onFocusEditable(event) {
 		this.lastValue = event.currentTarget.innerText;
 		this.selectInput(event);
 	}
 	_onUnfocusEditable(event) {
 		if (event.currentTarget.innerText == this.lastValue) return;
-		this._onChangeInput(event);
 		this.lastValue = undefined;
+		return this._onChangeEditable(event);
 	}
+
 	/**
-	 * This method is used as an event handler when an input is changed, updated, or submitted.
-	 * The input value is passed to Input Expressions for numbers, Roll for roll formulas.
-	 * If the input is attached to an item, it updates that item.
+	 * This method is used as an event handler when a contenteditable field is changed.
+	 * Numeric values are evaluated as expressions, roll formulas are validated.
+	 * If the input is attached to an item, it updates that item, otherwise the actor.
 	 *
 	 * @param {Event} event - The triggering event.
-	 * @return {null}
+	 * @return {Promise}
 	 * @memberof MonsterBlock5e
 	 */
-	_onChangeInput(event) {
+	async _onChangeEditable(event) {
 		const input = event.currentTarget;
 
 		input.innerText = input.innerText.replace(/\s+/gm, " ");	// Strip excess whitespace
-		let value = input.innerText;								// .innerText will not include any HTML tags
+		let value = input.innerText.trim();							// .innerText will not include any HTML tags
 
-		const entity = input.dataset.entity ?
-			this.actor.getEmbeddedDocument("Item", input.dataset.entity) :
-			this.actor.system;
-		const key = input.dataset.fieldKey
-		const dtype = input.dataset.dtype;
+		const doc = input.dataset.entity ? this.actor.items.get(input.dataset.entity) : this.actor;
+		if (!doc) return;
+		const key = input.dataset.fieldKey;
+		const dtype = input.dataset.dtype || "String";
+		const current = foundry.utils.getProperty(doc, key);
 
-		switch (dtype) {
-			case "Number":
-				if (value != "") value = this.handleNumberChange(entity, key, input, event);
-				break;
-			case "Roll": {
-				try {
-					value ? new Roll(value).roll() : null;
+		value = this.handleSpecial(key, value);
+
+		try {
+			switch (dtype) {
+				case "Number":
+					if (value !== "") value = evaluateExpression(value, current, this.actor.getRollData());
+					break;
+				case "Roll":
+				case "Formula": {
+					if (value && !Roll.validate(value)) throw new Error(`"${value}" is not a valid roll formula.`);
+					break;
 				}
-				catch (e) {
-					console.error(e);
-					ui.notifications.error(e);
-					input.innerText = foundry.utils.getProperty(entity, key);
+			}
+		}
+		catch (e) {
+			console.error(e);
+			ui.notifications.error(e.message ?? e);
+			input.innerText = current ?? "";
+			return;
+		}
+
+		value = ["Text", "String", "Formula", "Roll"].includes(dtype) ? value : castType(value, dtype);
+		if (dtype === "Number") input.innerText = value ?? "";	// Show the result of the expression rather than the expression
+		return doc.update(this.constructor.convertDerivedValue(doc, key, value));
+	}
+
+	/**
+	 * Some values (like item uses or legendary actions) are derived from a "spent" count.
+	 * Convert an update to such a value into an update of the source data.
+	 *
+	 * @param {Document} doc
+	 * @param {string} key
+	 * @param {any} value
+	 * @return {object} - The update data
+	 */
+	static convertDerivedValue(doc, key, value) {
+		if (key.endsWith(".value")) {
+			const base = key.slice(0, -".value".length);
+			const source = doc._source;
+			if (foundry.utils.hasProperty(source, `${base}.spent`) && !foundry.utils.hasProperty(source, key)) {
+				const max = Number(foundry.utils.getProperty(doc, `${base}.max`)) || 0;
+				const spent = Math.clamp(max - (Number(value) || 0), 0, Math.max(max, 0));
+				return { [`${base}.spent`]: spent };
+			}
+		}
+		return { [key]: value };
+	}
+
+	handleSpecial(key, value) {
+		switch (key) {
+			case "system.details.cr": {
+				if (value.indexOf("/") > -1) {
+					let cr = { "1/8": 0.125, "1/4": 0.25, "1/2": 0.5 }[value.trim()];
+					return cr != undefined ? String(cr) : value;
 				}
 				break;
 			}
 		}
 
-		if (input.dataset.entity) {
-			this.actor.updateEmbeddedDocuments("Item", [{
-				_id: input.dataset.entity,
-				[key]: value
-			}]).then(()=> { super._onChangeInput(event); });
-			return;
-		}
-
-		super._onChangeInput(event);
+		return value;
 	}
 
 	/**
-	 * Evaluate numeric input, handling expressions using Input Expressions
+	 * Open a file picker to change an image.
 	 *
-	 * @param {Entity} entity - The entity (Actor, Item) for the sheet.
-	 * @param {string} key - Data key for the value
-	 * @param {JQuery} input - The input element
-	 * @param {Event} event - The triggering event
-	 * @memberof MonsterBlock5e
+	 * @param {Event} event
 	 */
-	handleNumberChange(entity, key, input, event) {
-		const current = foundry.utils.getProperty(entity, key);
-
-		if (window.math?.roll)
-			return inputExpression(new ContentEditableAdapter(input), current, {
-				entity, event,
-				data: this.templateData,
-				actor: this.object
-			});
-		else {
-			input.innerText = current;
-			const msg = "Input Expressions for Monster Blocks appears to be missing or has failed to initialize.";
-			ui.notifications.error(msg);
-			throw Error(msg);
-		}
-	}
-
-	_onConfigMenu(event) {
+	_onEditImage(event) {
+		event.preventDefault();
 		event.stopPropagation();
-		return super._onConfigMenu(event);
-	}
-
-	_onTraitSelector(event) {
-		event.preventDefault();
-		const a = event.currentTarget;
-		const label = $(a).find(".attribute-name");
-		const options = {
-			name: a.dataset.target,
-			title: label.innerText,
-			choices: CONFIG.DND5E[a.dataset.options]
-		};
-		new dnd5e.applications.TraitSelector(this.actor, options).render(true)
-	}
-	_onCycleSkillProficiency(event) {
-		event.preventDefault();
-		let elem = event.currentTarget;
-		let value = elem.dataset.skillValue;
-
-		// Get the current level and the array of levels
-		const level = parseFloat(value);
-		const levels = Object.keys(CONFIG.DND5E.proficiencyLevels);
-		let idx = levels.indexOf(level);
-
-		// Toggle next level - forward on click, backwards on right
-		if (event.type === "click") {
-			elem.dataset.skillValue = levels[(idx === levels.length - 1) ? 0 : idx + 1];
-		} else if (event.type === "contextmenu") {
-			elem.dataset.skillValue = levels[(idx === 0) ? levels.length - 1 : idx - 1];
-		}
-
-		// Update the field value and save the form
-		this._onSubmit(event);
+		const img = event.currentTarget;
+		const attr = img.dataset.edit;
+		const current = foundry.utils.getProperty(this.actor._source, attr) ?? img.getAttribute("src");
+		const FilePicker = foundry.applications.apps.FilePicker.implementation;
+		const fp = new FilePicker({
+			current,
+			type: "image",
+			callback: path => this.actor.update({ [attr]: path })
+		});
+		return fp.browse();
 	}
 
 	/**
-	 * Closes the sheet.
+	 * Open one of the system's configuration applications.
 	 *
-	 * This override adds clearing of some temporary properties
-	 * to avoid potential errors.
-	 *
-	 * @override
-	 * @param {object} args
-	 * @return {Promise}
-	 * @memberof MonsterBlock5e
+	 * @param {Event} event
 	 */
-	async close(...args) {
+	_onConfigMenu(event) {
+		event.preventDefault();
+		event.stopPropagation();
+
+		const target = event.currentTarget;
+		const apps = dnd5e.applications;
+		const config = { document: this.actor };
+		let app;
+
+		switch (target.dataset.config) {
+			case "ability": {
+				const ability = target.closest("[data-ability]")?.dataset.ability;
+				app = new apps.actor.AbilityConfig({ ...config, key: ability });
+				break;
+			}
+			case "armor":
+			case "armorClass":
+				app = new apps.actor.ArmorClassConfig(config);
+				break;
+			case "type":
+			case "creatureType":
+				app = new apps.shared.CreatureTypeConfig(config);
+				break;
+			case "hitPoints":
+				app = new apps.actor.HitPointsConfig(config);
+				break;
+			case "movement":
+			case "senses":
+				app = new apps.shared.MovementSensesConfig({ ...config, type: target.dataset.config });
+				break;
+			case "skill": {
+				const skill = target.closest("[data-key]")?.dataset.key ?? target.dataset.key;
+				app = new apps.actor.SkillToolConfig({ ...config, trait: "skills", key: skill });
+				break;
+			}
+			case "spellSlots":
+				app = new apps.actor.SpellSlotsConfig(config);
+				break;
+			case "source":
+				app = new apps.shared.SourceConfig(config);
+				break;
+		}
+
+		if (!app) return;
+		if (typeof this.renderChild === "function") return this.renderChild(app);
+		return app.render({ force: true });
+	}
+
+	/** @override */
+	async close(options) {
 		this.lastValue = undefined;
 		this.lastSelection = {};
-		return super.close(...args);
+		this._monsterblockPositioned = false;
+		return super.close(options);
 	}
 
 	/**
-	 *
+	 * Roll the hit points formula and set current and maximum hit points.
+	 */
+	async _onRollHPFormula() {
+		const roll = await this.actor.rollNPCHitPoints();
+		if (!roll) return;
+		return this.actor.update({
+			"system.attributes.hp.value": roll.total,
+			"system.attributes.hp.max": roll.total
+		});
+	}
+
+	/**
+	 * Fallback handler for recharge rolls if the system method is unavailable.
 	 *
 	 * @param {boolean} success - Whether or not the roll was a success.
 	 * @param {Event} event - The event object associated with this roll.
 	 * @memberof MonsterBlock5e
 	 */
 	async setCharged(success, event) {
-		await this.actor.updateEmbeddedDocuments("Item", [{
-			_id: event.currentTarget.dataset.itemId,
-			"system.recharge.charged": success
-		}])
-
-		super._onChangeInput(event);
+		if (!success) return;
+		const item = this.actor.items.get(event.currentTarget.dataset.itemId);
+		const recharge = this.constructor.getRecharge(item);
+		if (!item || !recharge) return;
+		if (recharge.uses === item.system.uses) return item.update({ "system.uses.spent": 0 });
+		const activity = getActivities(item).find(a => a.uses === recharge.uses);
+		return activity ? item.updateActivity?.(activity.id, { "uses.spent": 0 }) : undefined;
 	}
+
+	/* -------------------------------------------- */
+	/*  Item Creation                               */
+	/* -------------------------------------------- */
+
+	async addFeature(event) {
+		const preset = event.currentTarget.dataset.preset;
+		const [item] = await this._onItemCreate(preset) ?? [];
+		if (!item) return;
+		return item.sheet.render({ force: true });
+	}
+
+	/**
+	 * Build the data for a newly created item based on a preset.
+	 *
+	 * @param {string} preset
+	 * @return {object}
+	 */
+	static getItemPreset(preset) {
+		const activity = (type, activationType) => {
+			const _id = foundry.utils.randomID();
+			return { [_id]: { _id, type, activation: { type: activationType } } };
+		};
+
+		switch (preset) {
+			case "attack": return {
+				type: "weapon",
+				system: {
+					type: { value: "natural" },
+					range: { reach: 5, units: "ft" },
+					activities: activity("attack", "action")
+				}
+			};
+			case "action": return {
+				type: "feat",
+				system: { activities: activity("utility", "action") }
+			};
+			case "spell": return { type: "spell", system: { level: 0 } };
+			case "loot": return { type: "loot" };
+			case "consumable": return { type: "consumable" };
+			case "feat":
+			default: return { type: "feat" };
+		}
+	}
+
+	_onItemCreate(preset) {
+		const itemData = this.constructor.getItemPreset(preset);
+		itemData.name = game.i18n.format("DND5E.ItemNew", {
+			type: game.i18n.localize(CONFIG.Item.typeLabels[itemData.type])
+		});
+		return this.actor.createEmbeddedDocuments("Item", [itemData]);
+	}
+
+	/* -------------------------------------------- */
+	/*  Trait toggles                               */
+	/* -------------------------------------------- */
+
+	_onToggleTrait(event, key) {
+		const dataset = event.currentTarget.dataset;
+		const path = `${dataset[key]}.value`;
+		const typ = dataset.option;
+		const value = new Set(foundry.utils.getProperty(this.actor, path) ?? []);
+		if (value.has(typ)) value.delete(typ);
+		else value.add(typ);
+
+		return this.actor.update({ [path]: Array.from(value) });
+	}
+
+	_onToggleDamage(event) {
+		return this._onToggleTrait(event, "damageType");
+	}
+
+	_onToggleCondition(event) {
+		return this._onToggleTrait(event, "conditionType");
+	}
+
+	_onToggleLanguage(event) {
+		return this._onToggleTrait(event, "languageOpt");
+	}
+
+	_onToggleSave(event) {
+		const dataset = event.currentTarget.dataset;
+		const path = `system.abilities.${dataset.option}.proficient`;
+		const value = foundry.utils.getProperty(this.actor, path);
+		return this.actor.update({ [path]: value ? 0 : 1 });
+	}
+
+	_onCycleProficiency(event) {
+		event.preventDefault();
+		if (event.target.closest(".config-button")) return;
+		const dataset = event.currentTarget.dataset;
+		const path = `system.skills.${dataset.skillId}.value`;
+		const value = foundry.utils.getProperty(this.actor, path) ?? 0;
+
+		// Cycle to the next or previous skill level.
+		const levels = [0, 1, .5, 2];
+		const idx = Math.max(0, levels.indexOf(value));
+		const next = idx + (event.type === "contextmenu" ? 3 : 1);
+		const newValue = levels[next % levels.length];
+
+		return this.actor.update({ [path]: newValue });
+	}
+
+	/* -------------------------------------------- */
+	/*  Item purpose checks                         */
+	/* -------------------------------------------- */
 
 	static isMultiAttack(item) {	// Checks if the item is the multiattack action.
 		let name = item.name.toLowerCase().replace(/\s+/g, "");	// Convert the name of the item to all lower case, and remove whitespace.
@@ -1235,184 +1592,94 @@ export default class MonsterBlock5e extends dnd5e.applications.actor.ActorSheet5
 	}
 
 	static isLegendaryResistance(item) {
-		if (isDndV4OrNewer()) {
-			return item.system?.activities?.some(a => a.consumption?.targets.some(t => t === "resources.legres.value"));
-		}
-		return item.system?.consume?.target === "resources.legres.value";
+		const document = item.document ?? item;
+		if (document.system?.identifier === "legendary-resistance") return true;
+		return getActivities(document).some(a => Array.from(a.consumption?.targets ?? []).some(t =>
+			typeof t === "string"
+				? t.startsWith("resources.legres")
+				: String(t?.target ?? "").startsWith("resources.legres")
+		));
 	}
 
-	// Item purpose checks
+	static activationTypes(item) {
+		return getActivities(item.document ?? item).map(a => a.activation?.type).filter(t => t);
+	}
+
 	static isLegendaryAction(item) {
-		if (isDndV4OrNewer()) {
-			return item.system?.activities?.some(a => a.activation?.type === "legendary");
-		}
-		return item.system?.activation?.type === "legendary";
+		return this.activationTypes(item).some(t => t === "legendary" || t === "mythic");
 	}
 
 	static isLairAction(item) {
-		if (isDndV4OrNewer()) {
-			return item.system?.activities?.some(a => a.activation?.type === "lair");
-		}
-		return item.system?.activation?.type === "lair";
+		return this.activationTypes(item).includes("lair");
 	}
 
 	static isAction(item) {
-		if (isDndV4OrNewer()) {
-			return item.system?.activities?.some(a => a.activation?.type && !["none", "special"].includes(a.activation.type));
-		}
-		return item.system?.activation?.type && item.system?.activation.type != "none";
+		return this.activationTypes(item).some(t => !["none", "special", ""].includes(t));
 	}
 
 	static isBonusAction(item) {
-		if (isDndV4OrNewer()) {
-			return item.system?.activities?.some(a => a.activation?.type === "bonus");
-		}
-		return item.system?.activation?.type === "bonus";
+		return this.activationTypes(item).includes("bonus");
 	}
 
 	static isReaction(item) {
-		if (isDndV4OrNewer()) {
-			return item.system?.activities?.some(a => a.activation?.type === "reaction");
-		}
-		return item.system?.activation?.type === "reaction";
+		return this.activationTypes(item).includes("reaction");
 	}
 
+	/**
+	 * Find the recharge configuration of an item, either on the item's uses or on one of its activities.
+	 *
+	 * @param {Item5e} item
+	 * @return {{formula: string, uses: object}|null}
+	 */
+	static getRecharge(item) {
+		if (!item) return null;
+		const sources = [item.system?.uses, ...getActivities(item).map(a => a.uses)];
+		for (const uses of sources) {
+			const recharge = Array.from(uses?.recovery ?? []).find(r => r.period === "recharge");
+			if (recharge) return { formula: recharge.formula, uses };
+		}
+		return null;
+	}
 
 	static getItemAbility(item, actor, master) {
-		return master.object.items.get(item._id).abilityMod;
+		return master.actor.items.get(item._id)?.abilityMod;
 	}
 
+	/* -------------------------------------------- */
+	/*  Formatting                                  */
+	/* -------------------------------------------- */
+
 	static formatNumberCommas(number) {
-		return number.toString().replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ",");	// https://stackoverflow.com/questions/2901102/how-to-print-a-number-with-commas-as-thousands-separators-in-javascript
+		return (number ?? 0).toString().replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ",");	// https://stackoverflow.com/questions/2901102/how-to-print-a-number-with-commas-as-thousands-separators-in-javascript
+	}
+	static formatModifier(number) {
+		const n = Number(number) || 0;
+		return n >= 0 ? `+${n}` : `${n}`;
 	}
 	static averageRoll(formula, mods) {
 		if (!formula) return 0;
 		try {
-			const rollMin = new Roll(formula, mods);
+			const rollMin = new Roll(String(formula), mods);
 			const rollMax = rollMin.clone();
 			return Math.floor((		// The maximum roll plus the minimum roll, divided by two, rounded down.
-				evaluateRoll(rollMax, { maximize: true }).total +
-				evaluateRoll(rollMin, { minimize: true }).total
+				rollMax.evaluateSync({ maximize: true, strict: false }).total +
+				rollMin.evaluateSync({ minimize: true, strict: false }).total
 			) / 2);
 		}
 		catch (e) {
 			console.error(e);
-			ui.notifications.error(e);
 			return 0;
 		}
 	}
 	static handlebarsHelpers = {
 		"moblok-hascontents": (obj) => { // Check if an array is empty.
 			return obj && Object.keys(obj).length > 0;
-		}
+		},
+		"moblok-getProperty": (obj, key) => foundry.utils.getProperty(obj, key)
 	}
 	static async preLoadTemplates() {
-		return loadTemplates([
-			// Shared Partials
-			"modules/monsterblock/templates/dnd5e/switches.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/switch.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/trigger.hbs",
-
-			// Actor Sheet Sections
-			"modules/monsterblock/templates/dnd5e/bio.hbs",
-			"modules/monsterblock/templates/dnd5e/header.hbs",
-			"modules/monsterblock/templates/dnd5e/main.hbs",
-			"modules/monsterblock/templates/dnd5e/collapsibleSection.hbs",
-			"modules/monsterblock/templates/dnd5e/sectionHeader.hbs",
-
-			// Actor Sheet Partials
-			"modules/monsterblock/templates/dnd5e/parts/header/identity.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes1.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/abilities.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes2.hbs",
-
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/armorclass.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/hitpoints.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/movement.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/saves.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/skills.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/senses.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/header/attributes/damage.hbs",
-
-			"modules/monsterblock/templates/dnd5e/parts/main/spellcasting.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/main/attack.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/main/legendaryActs.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/main/lairActs.hbs",
-
-			"modules/monsterblock/templates/dnd5e/parts/menuItem.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/resource.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/featureBlock.hbs",
-			"modules/monsterblock/templates/dnd5e/parts/damageRoll.hbs"
-
-		]);
+		if (this._templatesLoaded) return;
+		this._templatesLoaded = true;
+		return foundry.applications.handlebars.loadTemplates(this.PARTIALS);
 	}
-
-	_onItemCreate(event) {
-		event.preventDefault();
-		const dataset = event.currentTarget.dataset;
-		const type = dataset.type;
-
-		const itemData = {
-		  name: game.i18n.format("DND5E.ItemNew", {type: game.i18n.localize(CONFIG.Item.typeLabels[type])}),
-		  type: type,
-		  system: foundry.utils.expandObject({ ...dataset })
-		};
-		delete itemData.system.type;
-		return this.actor.createEmbeddedDocuments("Item", [itemData]);
-	}
-
-	_onToggleTrait(event, key) {
-		const dataset = event.currentTarget.dataset;
-		const path = `${dataset[key]}.value`;
-		const typ = dataset.option;
-		const value = foundry.utils.getProperty(this.actor, path) || new Set();
-		if (value.has(typ)) {
-			value.delete(typ);
-		} else {
-			value.add(typ);
-		}
-
-		this.actor.update({[path]: value});
-	}
-
-	_onToggleDamage(event) {
-		this._onToggleTrait(event, 'damageType');
-	}
-
-	_onToggleCondition(event) {
-		this._onToggleTrait(event, 'conditionType');
-	}
-
-	_onToggleLanguage(event) {
-		this._onToggleTrait(event, 'languageOpt');
-	}
-
-	_onToggleSave(event) {
-		const dataset = event.currentTarget.dataset;
-		const path = `system.abilities.${dataset.option}.proficient`;
-		const value = foundry.utils.getProperty(this.actor, path);
-		this.actor.update({[path]: value === 1 ? 0 : 1});
-	}
-
-	_onCycleProficiency(event) {
-		const dataset = event.currentTarget.dataset;
-		const path = `system.skills.${dataset.skillId}.value`;
-		const value = foundry.utils.getProperty(this.actor, path);
-
-		// Cycle to the next or previous skill level.
-		const levels = [0, 1, .5, 2];
-		const idx = levels.indexOf(value);
-		const next = idx + (event.type === "contextmenu" ? 3 : 1);
-		const newValue = levels[next % levels.length];
-
-		this.actor.update({[path]: newValue});
-	}
-}
-
-function evaluateRoll(roll, opts) {
-	if (roll.evaluateSync) {
-		return roll.evaluateSync(opts);
-	}
-
-	return roll.evaluate({...opts, async: false});
 }

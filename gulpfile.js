@@ -8,9 +8,9 @@ function createRelease(cb) {
 		"module.json",
 		"monsterblock.js",
 		"monsterblock.css",
-		"actor-sheet.html",
-		"lang/*",
-		"input-expressions/handler.js"
+		"templates/**/*",
+		"scripts/**/*",
+		"lang/*"
 	], { base: "." })
 		.pipe(zip("monsterblock.zip"))
 		.pipe(Gulp.dest("./"));

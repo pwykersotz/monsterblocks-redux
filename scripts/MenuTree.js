@@ -36,7 +36,7 @@ export class MenuTree extends MenuItem {
 	 * @param {string} auxSelect - A selector for an auxilary element to toggle a class on
 	 * @param {string} auxClass - A class to toggle on the auxilary element
 	 * @param {Boolean} visible - Set the initial state of visible or not
-	 * @param {JQuery} element - Set the jQuery object for the HTML element associated with this menu
+	 * @param {HTMLElement} element - Set the jQuery object for the HTML element associated with this menu
 	 * @param {MenuItem[]} children - An array of items in this menu
 	 * @memberof MenuTree
 	 */
@@ -57,18 +57,25 @@ export class MenuTree extends MenuItem {
 		this._element = element ?? false;
 		this.children = children ?? [];
 	}
+	/** @type {HTMLElement|null} The root element of the sheet */
+	get root() {
+		return this.monsterblock.element ?? null;
+	}
+	/** @type {HTMLElement|null} The wrapper element of this menu */
 	get element() {
-		return this.button.parent();
+		return this.button?.parentElement ?? null;
 	}
+	/** @type {HTMLElement|null} The toggle button of this menu */
 	get button() {
-		return this.monsterblock._element.find(`[data-menu-id=${this.id}]`);
+		return this.root?.querySelector(`[data-menu-id="${this.id}"]`) ?? null;
 	}
+	/** @type {HTMLElement|false} An auxiliary element to toggle a class on */
 	get auxElement() {
 		if (!this.auxSelect) return false;
-		return this.monsterblock._element.find(this.auxSelect);
+		return this.root?.querySelector(this.auxSelect) ?? false;
 	}
 	attachHandler() {
-		this.button.click(() => {
+		this.button?.addEventListener("click", () => {
 			if (!this.visible) this.open();
 			else this.close();
 		});
@@ -76,14 +83,14 @@ export class MenuTree extends MenuItem {
 	open() {
 		if (this.visible) return;
 		if (this.parent) this.parent.closeChildren();
-		this.element.addClass("menu-open");
-		if (this.auxElement) this.auxElement.addClass(this.auxClass);
+		this.element?.classList.add("menu-open");
+		if (this.auxElement) this.auxElement.classList.add(this.auxClass);
 		this.visible = true;
 	}
 	close() {
 		if (!this.visible) return;
-		this.element.removeClass("menu-open");
-		if (this.auxElement) this.auxElement.removeClass(this.auxClass);
+		this.element?.classList.remove("menu-open");
+		if (this.auxElement) this.auxElement.classList.remove(this.auxClass);
 		this.visible = false;
 		this.closeChildren();
 	}

@@ -54,7 +54,9 @@ export default class CastingPreper extends ItemPreper {
 	 * @memberof CastingPreper
 	 */
 	static isPactMagic(item) {
-		const desc = item.system.description?.value?.toLowerCase().replace(/\s+/g, "") ?? "";
+		const document = item.document ?? item;
+		if (document.actor?.items.some(i => i.type === "spell" && i.system.method === "pact" && i.system.level > 0)) return true;
+		const desc = document.system.description?.value?.toLowerCase().replace(/\s+/g, "") ?? "";
 		return getTranslationArray("MOBLOKS5E.WarlockLocators").some(
 			s => desc.indexOf(s) > -1
 		);
@@ -117,7 +119,7 @@ export default class CastingPreper extends ItemPreper {
 	 * @memberof CastingPreper
 	 */
 	prepare() {
-		this.data.castingType = this.constructor.isSpellcasting(this.item) ?
+		this.data.castingType = this.constructor.isSpellcasting(this.item) && !this.usesOnlyInnateSpells ?
 			(this.constructor.isPactMagic(this.item) ? this.cts.pact : this.cts.standard) : this.cts.innate;
 
 		this.data.hasAtWill = this.sheet.hasAtWillSpells();
@@ -134,6 +136,21 @@ export default class CastingPreper extends ItemPreper {
 		if (debug.enabled) console.debug(this);
 	}
 
+
+	/**
+	 * Whether or not the actor only has innate or at-will spells, and no spells that use slots.
+	 * Creatures from the 2024 Monster Manual use a "Spellcasting" feature for this kind of casting.
+	 *
+	 * @type {boolean}
+	 * @readonly
+	 * @memberof CastingPreper
+	 */
+	get usesOnlyInnateSpells() {
+		const book = this.templateData.spellbook ?? [];
+		const hasSlotSpells = book.some(page => page.order > 0 && page.spells.length);
+		const hasInnate = (this.templateData.innateSpellbook ?? []).some(page => page.spells.length);
+		return !hasSlotSpells && hasInnate;
+	}
 
 	/**
 	 * Retuns the formatted spellbook data for the associated casting feature
@@ -220,8 +237,6 @@ export default class CastingPreper extends ItemPreper {
 	getPageLabel(page) {
 		let level = "";
 
-		console.debug(page);
-
 		if (this.pact) level = `${Helpers.formatOrdinal(1)}-${Helpers.formatOrdinal(page.maxSpellLevel)}`;  // 1st-maxTh
 		else           level = Helpers.formatOrdinal(page.maxSpellLevel);
 
@@ -236,8 +251,8 @@ export default class CastingPreper extends ItemPreper {
 	 * @return {string}
 	 * @memberof CastingPreper
 	 */
-	getPageSlotKey({ maxSpellLevel }) {
-		const suffix = this.pact ? "pact" : `spell${maxSpellLevel}`;
+	getPageSlotKey({ maxSpellLevel, prop }) {
+		const suffix = prop && prop.startsWith("spell") || prop === "pact" ? prop : (this.pact ? "pact" : `spell${maxSpellLevel}`);
 		return `system.spells.${suffix}`;
 	}
 
@@ -332,7 +347,8 @@ export default class CastingPreper extends ItemPreper {
 	 * @memberof CastingPreper
 	 */
 	get casterLevel() {
-		return this.sheet.actor.system.details?.spellLevel ?? 0;
+		const system = this.sheet.actor.system;
+		return system.attributes?.spell?.level ?? system.details?.spellLevel ?? 0;
 	}
 
 	/**
@@ -404,7 +420,7 @@ export default class CastingPreper extends ItemPreper {
 		return game.i18n.format("MOBLOKS5E.CasterNameLevel", {
 			name: this.sheet.actor.name,
 			level: Templates.editable({
-				key: "system.details.spellLevel",
+				key: "system.attributes.spell.level",
 				value: this.casterLevel,
 				className: "caster-level",
 				dtype: "Number",
@@ -452,7 +468,7 @@ export default class CastingPreper extends ItemPreper {
 	 */
 	get casterStatsText() {
 		return game.i18n.format("MOBLOKS5E.CastingStats", {
-			savedc: this.sheet.actor.system?.attributes?.spelldc,
+			savedc: this.sheet.actor.system?.attributes?.spell?.dc ?? this.sheet.actor.system?.attributes?.spelldc,
 			bonus: `${this.tohit > -1 ? "+" : ""}${this.tohit}`
 		})
 	}
@@ -527,8 +543,10 @@ export default class CastingPreper extends ItemPreper {
 	 */
 	getSpellAttackBonus() {
 		const data = this.sheet.actor.system;
-		const abilityBonus = data.abilities[this.castingAbility]?.mod;
-		const profBonus = data.attributes?.prof;
+		const ability = data.abilities[this.castingAbility];
+		if (Number.isFinite(ability?.attack?.value)) return ability.attack.value;
+		const abilityBonus = ability?.mod ?? 0;
+		const profBonus = data.attributes?.prof ?? 0;
 
 		return abilityBonus + profBonus;
 	}
@@ -560,11 +578,11 @@ export default class CastingPreper extends ItemPreper {
 				s.system.ability &&
 				s.system.ability != main
 			);
-			castingability = spell?.data?.ability ?? main;
+			castingability = spell?.system?.ability ?? main;
 		}
 
 		return [
-			this.templateData?.abilities[castingability]?.label
+			CONFIG.DND5E.abilities[castingability]?.label
 				?? game.i18n.localize("DND5E.AbilityInt"),
 			castingability
 		];

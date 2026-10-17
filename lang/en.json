@@ -182,6 +182,7 @@
 		
 		"SwitchToDefault": "Switch to default sheet",
 		"SwitchToMobloks": "Switch to Monster Blocks",
+		"CannotSwitchSheet": "You must own this actor, and it must not be in a compendium, to change its sheet.",
 
 		"DescriptionS": "Descriptions",
 		"ProfileImage": "Profile image",
@@ -220,6 +221,7 @@
 		"SkillS": "Skills",
 		"XPLabel": "{xp} XP",
 		"physicalDamage": "bludgeoning, piercing, and slashing from nonmagical attacks",
+		"physicalDamageBypass": "bludgeoning, piercing, and slashing from attacks that aren't {bypass}",
 		"Challenge": "Challenge",
 		"ProfBonus": "Proficiency Bonus",
 

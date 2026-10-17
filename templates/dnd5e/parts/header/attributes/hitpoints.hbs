@@ -4,7 +4,7 @@
 	</a>
 </h4>
 {{~#unless (or flags.current-hit-points flags.maximum-hit-points)~}}
-	<span title="{{localize "MOBLOKS5E.Average"}}" class="attr-value">{{system.attributes.hp.average}}</span>
+	<span title="{{localize "MOBLOKS5E.Average"}}" class="attr-value">{{hp.average}}</span>
 {{~/unless~}}
 {{#if flags.current-hit-points}}
 	<span title="{{localize "MOBLOKS5E.Current"}}"
@@ -39,7 +39,7 @@
 {{/if}}
 
 {{#if system.attributes.hp.formula}}<span class="paren">(</span>{{~/if~}}
-<span title="Average: {{system.attributes.hp.average}}"
+<span title="{{localize "MOBLOKS5E.Average"}}: {{hp.average}}"
 	placeholder="(1d6)"
 	data-field-key="system.attributes.hp.formula"
 	data-dtype="Formula"
