@@ -1174,24 +1174,43 @@ li:nth-last-of-type(2):after {
 .monsterblock .hp-temp {
 	white-space: nowrap;
 }
-.monsterblock .hp-temp [contenteditable="true"]:empty::before {
-	content: attr(placeholder);
-	opacity: .5;
-}
-.monsterblock .hp-controls {
+.monsterblock .attribute .hp-controls {
+	display: inline-flex;
+	align-items: center;
+	gap: .4em;
+	margin-left: .5em;
+	padding-left: .5em;
+	border-left: 1px solid var(--faded-text);
+	text-indent: 0;
 	white-space: nowrap;
-	margin-left: .25em;
+	vertical-align: baseline;
+	line-height: 1;
 }
-.monsterblock .hp-controls a {
-	font-size: .8em;
-	margin-left: .35em;
-	opacity: .6;
+.monsterblock .attribute .hp-controls > a,
+.monsterblock .attribute .hp-controls > a.config-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 1.4em;
+	height: 1.4em;
+	margin: 0;
+	padding: 0;
+	position: static;
+	text-indent: 0;
+	font-size: .85em;
+	opacity: .65;
 	cursor: pointer;
 }
-.monsterblock .hp-controls a:hover {
+.monsterblock .attribute .hp-controls > a:hover {
 	opacity: 1;
 }
-.monsterblock .hp-controls .config-button {
-	display: inline;
-	padding-left: 0;
+.monsterblock .attribute .hp-controls > a > i {
+	display: inline-block;
+	position: static;
+	margin: 0;
+	padding: 0;
+	width: auto;
+	text-indent: 0;
+	pointer-events: none;
 }

@@ -1,5 +1,5 @@
 <h4 class="attribute-name box-title">
-	<a class="trigger" data-control="_onRollHPFormula" data-tooltip="{{localize "MOBLOKS5E.hp.roll"}}">
+	<a class="trigger" data-control="_onRollHPFormula" data-tooltip="MOBLOKS5E.hp.roll">
 		{{~localize "DND5E.HitPoints"}}
 	</a>
 </h4>
@@ -45,14 +45,14 @@
 			data-field-key="system.attributes.hp.temp"
 			data-dtype="Number"
 			class="attr-value"
-			contenteditable="{{owner}}">{{#if hp.temp}}{{hp.temp}}{{/if}}</span>
+			contenteditable="{{owner}}">{{#if hp.temp}}{{hp.temp}}{{else}}0{{/if}}</span>
 		&#32;{{~localize "MOBLOKS5E.hp.temp"}}<span class="paren">)</span>
 	</span>
 	{{~/if~}}
 {{~/if~}}
 
 {{#if hp.formula}}<span class="paren">(</span>{{~/if~}}
-<span title="{{localize "DND5E.HPFormula"}} &mdash; {{localize "MOBLOKS5E.Average"}}: {{hp.average}}"
+<span data-tooltip="{{localize "DND5E.HPFormula"}} &mdash; {{localize "MOBLOKS5E.Average"}}: {{hp.average}}"
 	placeholder="(1d6)"
 	data-field-key="system.attributes.hp.formula"
 	data-dtype="Formula"
@@ -64,12 +64,12 @@
 {{#if flags.editing}}
 	<span class="hp-controls">
 		{{~#if hp.formula~}}
-		<a class="trigger" data-control="_onRollHPFormula" data-tooltip="{{localize "MOBLOKS5E.hp.roll"}}"><i class="fas fa-dice-d20"></i></a>
-		<a class="trigger" data-control="setHPToAverage" data-tooltip="{{localize "MOBLOKS5E.hp.average"}}"><i class="fas fa-equals"></i></a>
+		<a class="trigger" data-control="_onRollHPFormula" data-tooltip="MOBLOKS5E.hp.roll" aria-label="{{localize "MOBLOKS5E.hp.roll"}}"><i class="fas fa-dice-d20"></i></a>
+		<a class="trigger" data-control="setHPToAverage" data-tooltip="MOBLOKS5E.hp.average" aria-label="{{localize "MOBLOKS5E.hp.average"}}"><i class="fas fa-equals"></i></a>
 		{{~/if~}}
-		<a class="trigger" data-control="healToFull" data-tooltip="{{localize "MOBLOKS5E.hp.heal"}}"><i class="fas fa-heart"></i></a>
-		<a class="config-button" data-config="hitPoints" data-tooltip="{{localize "DND5E.HitPointsConfig"}}"><i class="fas fa-cog"></i></a>
+		<a class="trigger" data-control="healToFull" data-tooltip="MOBLOKS5E.hp.heal" aria-label="{{localize "MOBLOKS5E.hp.heal"}}"><i class="fas fa-heart"></i></a>
+		<a class="config-button" data-config="hitPoints" data-tooltip="DND5E.HitPointsConfig" aria-label="{{localize "DND5E.HitPointsConfig"}}"><i class="fas fa-cog"></i></a>
 	</span>
 {{else if owner}}
-	<a class="config-button" data-config="hitPoints" data-tooltip="{{localize "DND5E.HitPointsConfig"}}"><i class="fas fa-cog"></i></a>
+	<a class="config-button" data-config="hitPoints" data-tooltip="DND5E.HitPointsConfig" aria-label="{{localize "DND5E.HitPointsConfig"}}"><i class="fas fa-cog"></i></a>
 {{/if}}
