@@ -42,7 +42,6 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 
 		this.flagManager = new Flags(this);
 		this.lastSelection = {};
-		this.lastValue = undefined;
 
 		this.prepMenus();
 	}
@@ -152,8 +151,11 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 		});
 
 		context.labels = this.prepLabels();
+		const hpSource = actor._source.system?.attributes?.hp ?? {};
 		context.hp = {
 			...system.attributes.hp,
+			sourceMax: hpSource.max ?? system.attributes.hp.max,
+			hasBonus: (hpSource.max ?? null) !== null && hpSource.max !== system.attributes.hp.max,
 			average: this.constructor.averageRoll(system.attributes.hp.formula, actor.getRollData())
 		};
 		context.abilities = this.prepAbilities();
@@ -1278,12 +1280,17 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 	}
 
 	_onFocusEditable(event) {
-		this.lastValue = event.currentTarget.innerText;
+		const el = event.currentTarget;
+		// Remember the starting value on the element itself, so moving between fields can't confuse them.
+		if (!("originalValue" in el.dataset)) el.dataset.originalValue = el.innerText;
 		this.selectInput(event);
 	}
 	_onUnfocusEditable(event) {
-		if (event.currentTarget.innerText == this.lastValue) return;
-		this.lastValue = undefined;
+		const el = event.currentTarget;
+		if (!("originalValue" in el.dataset)) return;
+		const original = el.dataset.originalValue;
+		delete el.dataset.originalValue;
+		if (el.innerText == original) return;
 		return this._onChangeEditable(event);
 	}
 
@@ -1331,6 +1338,13 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 
 		value = ["Text", "String", "Formula", "Roll"].includes(dtype) ? value : castType(value, dtype);
 		if (dtype === "Number") input.innerText = value ?? "";	// Show the result of the expression rather than the expression
+		if (key === "system.attributes.hp.max" && doc === this.actor && typeof value === "number") {
+			// The displayed maximum includes bonuses and effects. Store the base value that produces the typed total.
+			const derived = Number(this.actor.system.attributes.hp.max) || 0;
+			const source = Number(this.actor._source.system.attributes.hp.max ?? derived) || 0;
+			value = Math.max(0, value - (derived - source));
+		}
+		if (key === "system.attributes.hp.temp" && value === 0) value = null;
 		return doc.update(this.constructor.convertDerivedValue(doc, key, value));
 	}
 
@@ -1445,7 +1459,6 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 
 	/** @override */
 	async close(options) {
-		this.lastValue = undefined;
 		this.lastSelection = {};
 		this._monsterblockPositioned = false;
 		return super.close(options);
@@ -1460,6 +1473,30 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 		return this.actor.update({
 			"system.attributes.hp.value": roll.total,
 			"system.attributes.hp.max": roll.total
+		});
+	}
+
+	/**
+	 * Set maximum and current hit points to the average of the hit point formula.
+	 */
+	async setHPToAverage() {
+		const formula = this.actor.system.attributes.hp.formula;
+		if (!formula) return ui.notifications.warn(game.i18n.localize("MOBLOKS5E.hp.noFormula"));
+		const average = this.constructor.averageRoll(formula, this.actor.getRollData());
+		return this.actor.update({
+			"system.attributes.hp.max": average,
+			"system.attributes.hp.value": average
+		});
+	}
+
+	/**
+	 * Restore current hit points to the maximum and clear temporary hit points.
+	 */
+	async healToFull() {
+		const hp = this.actor.system.attributes.hp;
+		return this.actor.update({
+			"system.attributes.hp.value": hp.effectiveMax ?? hp.max,
+			"system.attributes.hp.temp": null
 		});
 	}
 

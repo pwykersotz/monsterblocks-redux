@@ -1169,3 +1169,29 @@ li:nth-last-of-type(2):after {
 .monsterblock .spell.draggable {
 	cursor: pointer;
 }
+
+/* Hit point controls */
+.monsterblock .hp-temp {
+	white-space: nowrap;
+}
+.monsterblock .hp-temp [contenteditable="true"]:empty::before {
+	content: attr(placeholder);
+	opacity: .5;
+}
+.monsterblock .hp-controls {
+	white-space: nowrap;
+	margin-left: .25em;
+}
+.monsterblock .hp-controls a {
+	font-size: .8em;
+	margin-left: .35em;
+	opacity: .6;
+	cursor: pointer;
+}
+.monsterblock .hp-controls a:hover {
+	opacity: 1;
+}
+.monsterblock .hp-controls .config-button {
+	display: inline;
+	padding-left: 0;
+}

@@ -1,5 +1,5 @@
 <h4 class="attribute-name box-title">
-	<a class="trigger" data-control="_onRollHPFormula">
+	<a class="trigger" data-control="_onRollHPFormula" data-tooltip="{{localize "MOBLOKS5E.hp.roll"}}">
 		{{~localize "DND5E.HitPoints"}}
 	</a>
 </h4>
@@ -13,8 +13,8 @@
 		data-dtype="Number"
 		class="attr-value"
 		contenteditable="{{owner}}">
-		{{~#if system.attributes.hp.value~}}
-			{{~system.attributes.hp.value~}}
+		{{~#if hp.value~}}
+			{{~hp.value~}}
 		{{~else~}}
 			0
 		{{~/if~}}
@@ -24,27 +24,52 @@
 	<span class="sep"> / </span>
 {{~/if~}}
 {{~#if flags.maximum-hit-points~}}
-	<span title="{{localize "MOBLOKS5E.Maximum"}}"
+	<span title="{{localize "DND5E.HitPointsMax"}}{{#if hp.hasBonus}} ({{localize "MOBLOKS5E.hp.baseMax" value=hp.sourceMax}}){{/if}}"
 		placeholder="0"
 		data-field-key="system.attributes.hp.max"
 		data-dtype="Number"
 		class="attr-value"
-		contenteditable="{{owner}}">
-		{{~#if system.attributes.hp.max~}}
-			{{system.attributes.hp.max~}}
+		contenteditable="{{flags.editing}}">
+		{{~#if hp.max~}}
+			{{hp.max~}}
 		{{~else~}}
 			0
 		{{~/if~}}
 	</span>
 {{/if}}
+{{~#if (or hp.temp flags.editing)~}}
+	{{~#if owner~}}
+	<span class="hp-temp" title="{{localize "DND5E.HitPointsTemp"}}">
+		&#32;<span class="paren">(</span>+<span
+			placeholder="0"
+			data-field-key="system.attributes.hp.temp"
+			data-dtype="Number"
+			class="attr-value"
+			contenteditable="{{owner}}">{{#if hp.temp}}{{hp.temp}}{{/if}}</span>
+		&#32;{{~localize "MOBLOKS5E.hp.temp"}}<span class="paren">)</span>
+	</span>
+	{{~/if~}}
+{{~/if~}}
 
-{{#if system.attributes.hp.formula}}<span class="paren">(</span>{{~/if~}}
-<span title="{{localize "MOBLOKS5E.Average"}}: {{hp.average}}"
+{{#if hp.formula}}<span class="paren">(</span>{{~/if~}}
+<span title="{{localize "DND5E.HPFormula"}} &mdash; {{localize "MOBLOKS5E.Average"}}: {{hp.average}}"
 	placeholder="(1d6)"
 	data-field-key="system.attributes.hp.formula"
 	data-dtype="Formula"
 	class="attr-value"
 	contenteditable="{{flags.editing}}">
-		{{~system.attributes.hp.formula~}}
+		{{~hp.formula~}}
 </span>{{~" "~}}
-{{#if system.attributes.hp.formula}}<span class="paren">)</span>{{~/if~}}
+{{#if hp.formula}}<span class="paren">)</span>{{~/if~}}
+{{#if flags.editing}}
+	<span class="hp-controls">
+		{{~#if hp.formula~}}
+		<a class="trigger" data-control="_onRollHPFormula" data-tooltip="{{localize "MOBLOKS5E.hp.roll"}}"><i class="fas fa-dice-d20"></i></a>
+		<a class="trigger" data-control="setHPToAverage" data-tooltip="{{localize "MOBLOKS5E.hp.average"}}"><i class="fas fa-equals"></i></a>
+		{{~/if~}}
+		<a class="trigger" data-control="healToFull" data-tooltip="{{localize "MOBLOKS5E.hp.heal"}}"><i class="fas fa-heart"></i></a>
+		<a class="config-button" data-config="hitPoints" data-tooltip="{{localize "DND5E.HitPointsConfig"}}"><i class="fas fa-cog"></i></a>
+	</span>
+{{else if owner}}
+	<a class="config-button" data-config="hitPoints" data-tooltip="{{localize "DND5E.HitPointsConfig"}}"><i class="fas fa-cog"></i></a>
+{{/if}}

@@ -200,6 +200,14 @@
 		"SystemThemeName": "5e System",
 		
 		"Average": "Average",
+		"hp": {
+			"temp": "temp",
+			"roll": "Roll the hit point formula and set current and maximum hit points",
+			"average": "Set current and maximum hit points to the formula's average",
+			"heal": "Restore to maximum hit points and clear temporary hit points",
+			"baseMax": "base {value} before bonuses",
+			"noFormula": "This creature has no hit point formula."
+		},
 		"Current": "Current",
 		"Maximum": "Maximum",
 		
