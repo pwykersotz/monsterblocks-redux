@@ -36,6 +36,26 @@
 {{! Actions }}
 	{{#if info.hasActions}}
 		{{#> "modules/monsterblock/templates/dnd5e/collapsibleSection.hbs" title="DND5E.ActionPl" section="actions"}}
+			{{! Global attack modifiers }}
+			{{#if (and flags.editing owner)}}
+				<p class="attack-modifiers">
+					<span class="attack-modifiers-label">{{localize "MOBLOKS5E.attackMods.label"}}</span>
+					{{localize "MOBLOKS5E.attackMods.toHit"}}
+					<span class="attr-value"
+						placeholder="+0"
+						contenteditable="true"
+						data-dtype="Formula"
+						data-field-key="system.rolls.attack.bonus"
+						data-tooltip="MOBLOKS5E.attackMods.toHitHint">{{attackMods.toHit}}</span>{{localize "MOBLOKS5E.Comma"}}
+					{{localize "MOBLOKS5E.attackMods.damage"}}
+					<span class="attr-value"
+						placeholder="{{#if attackMods.mixed}}{{localize "MOBLOKS5E.attackMods.mixed"}}{{else}}+0{{/if}}"
+						contenteditable="true"
+						data-dtype="Formula"
+						data-field-key="monsterblock.damageBonus"
+						data-tooltip="MOBLOKS5E.attackMods.damageHint">{{attackMods.damage}}</span>
+				</p>
+			{{/if}}
 			{{! Multiattack }}
 			{{#if features.multiattack.items}}
 				{{> "modules/monsterblock/templates/dnd5e/parts/featureBlock.hbs" item=features.multiattack.items.[0]}}

@@ -32,6 +32,15 @@ Hooks.once("setup", () => {
 		)
 	);
 
+	game.settings.register("monsterblock", "confirm-delete", {
+		name: "MOBLOKS5E.confirm-delete.settings.name",
+		hint: "MOBLOKS5E.confirm-delete.settings.hint",
+		scope: "world",
+		config: true,
+		type: Boolean,
+		default: true
+	});
+
 	game.settings.register("monsterblock", "max-height-offset", {
 		name: "MOBLOKS5E.max-height-offset.settings.name",
 		hint: "MOBLOKS5E.max-height-offset.settings.hint",

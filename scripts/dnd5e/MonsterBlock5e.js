@@ -163,6 +163,7 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 		context.languages = this.prepLanguages();
 		context.damageTraits = this.prepDamageTraits();
 		context.legendary = this.prepLegendary();
+		context.attackMods = this.prepAttackModifiers();
 		this.prepMovement(context);
 		this.prepSenses(context);
 
@@ -178,6 +179,7 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 
 		if (context.notOwner || !this.isEditable) context.flags.editing = false;
 		if (!context.flags.editing) context.flags["show-delete"] = false;
+		context.canDelete = Boolean(context.flags.editing && context.owner);
 		if (actor.limited) context.flags["show-bio"] = true;
 
 		// Prepare items in the old "getData" format, then classify them.
@@ -407,6 +409,56 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 		}
 
 		return result;
+	}
+
+	/**
+	 * The attack types that the global damage modifier is applied to.
+	 *
+	 * @type {string[]}
+	 */
+	static ATTACK_TYPES = ["mwak", "rwak", "msak", "rsak"];
+
+	/**
+	 * Prepare the global attack and damage modifiers.
+	 *
+	 * @return {object}
+	 */
+	prepAttackModifiers() {
+		const rolls = this.actor._source.system?.rolls ?? {};
+		const toHit = rolls.attack?.bonus ?? "";
+		const damages = this.constructor.ATTACK_TYPES.map(t => rolls.damage?.[t]?.bonus ?? "");
+		const mixed = damages.some(d => d !== damages[0]);
+		return {
+			toHit: this.constructor.formatBonus(toHit),
+			damage: mixed ? "" : this.constructor.formatBonus(damages[0]),
+			mixed,
+			active: Boolean(toHit || damages.some(d => d))
+		};
+	}
+
+	/**
+	 * Format a bonus formula for display, adding a + sign to positive values.
+	 *
+	 * @param {string|number} bonus
+	 * @return {string}
+	 */
+	static formatBonus(bonus) {
+		const value = String(bonus ?? "").trim();
+		if (!value || /^[+-]?0+$/.test(value)) return "";
+		return /^[+-]/.test(value) ? value : `+${value}`;
+	}
+
+	/**
+	 * Clean up a typed bonus formula before saving it.
+	 *
+	 * @param {string} value
+	 * @return {string}
+	 */
+	static normalizeBonus(value) {
+		let v = String(value ?? "").replace(/\s+/g, " ").trim();
+		if (v.startsWith("+")) v = v.slice(1).trim();
+		if (/^[+-]?0+$/.test(v)) v = "";
+		return v;
 	}
 
 	/**
@@ -1149,9 +1201,7 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 		on(".delete-item", "click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
-			const el = event.currentTarget;
-			const item = this.actor.items.get(el.dataset.itemId);
-			return item?.delete();
+			return this.deleteItem(event.currentTarget.dataset.itemId);
 		});
 
 		if (this.isEditable && this.flags.editing) {
@@ -1171,6 +1221,35 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 
 		// Configure Special Flags
 		on(".config-button", "click", this._onConfigMenu);
+	}
+
+	/**
+	 * Delete an item from the actor, asking for confirmation first unless that has been turned off.
+	 *
+	 * @param {string} id - The item's id
+	 * @return {Promise}
+	 */
+	async deleteItem(id) {
+		const item = this.actor.items.get(id);
+		if (!item) return;
+
+		let confirmed = true;
+		if (game.settings.get("monsterblock", "confirm-delete")) {
+			const escape = foundry.utils.escapeHTML ?? (s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`));
+			confirmed = await foundry.applications.api.DialogV2.confirm({
+				window: { title: game.i18n.format("MOBLOKS5E.delete.title", { name: item.name }), icon: "fas fa-trash" },
+				content: `<p>${game.i18n.format("MOBLOKS5E.delete.content", {
+					name: `<strong>${escape(item.name)}</strong>`,
+					actor: escape(this.actor.name)
+				})}</p>`,
+				yes: { label: "MOBLOKS5E.delete.yes", icon: "fas fa-trash" },
+				no: { label: "MOBLOKS5E.delete.no", default: true },
+				rejectClose: false,
+				modal: true
+			});
+		}
+		if (confirmed !== true) return;
+		return item.delete();
 	}
 
 	/**
@@ -1324,7 +1403,8 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 					break;
 				case "Roll":
 				case "Formula": {
-					if (value && !Roll.validate(value)) throw new Error(`"${value}" is not a valid roll formula.`);
+					const formula = String(value).replace(/^\s*\+/, "");
+					if (formula && !Roll.validate(formula)) throw new Error(`"${value}" is not a valid roll formula.`);
 					break;
 				}
 			}
@@ -1334,6 +1414,15 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 			ui.notifications.error(e.message ?? e);
 			input.innerText = current ?? "";
 			return;
+		}
+
+		if (key === "system.rolls.attack.bonus" || key === "monsterblock.damageBonus") {
+			value = this.constructor.normalizeBonus(value);
+			input.innerText = this.constructor.formatBonus(value);
+			if (key === "system.rolls.attack.bonus") return this.actor.update({ [key]: value });
+			return this.actor.update(Object.fromEntries(
+				this.constructor.ATTACK_TYPES.map(t => [`system.rolls.damage.${t}.bonus`, value])
+			));
 		}
 
 		value = ["Text", "String", "Formula", "Roll"].includes(dtype) ? value : castType(value, dtype);

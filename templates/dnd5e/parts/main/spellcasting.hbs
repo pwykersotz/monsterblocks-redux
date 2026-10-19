@@ -1,7 +1,7 @@
 <section class="item monster-feature spellcasting-trait{{#unless casting.flags.monsterblock.expanded}} compact{{/unless}}" title="{{#if @root.flags.editing}}{{localize "MOBLOKS5E.EditHint"}}{{/if}}">
 	<div class="feature-description inline-children">
-		{{#if @root.flags.show-delete}}
-			<a class="delete-item" data-item-id="{{casting._id}}">
+		{{#if @root.canDelete}}
+			<a class="delete-item" data-tooltip="MOBLOKS5E.delete.tooltip" data-item-id="{{casting._id}}">
 				<i class="fa fa-trash"></i>
 			</a>
 		{{/if}}
@@ -41,8 +41,8 @@
 					<ul class="inline-list spells-level-{{page.dataset.level}}">
 					{{#each page.spells as |spell id|}}
 						<li class="spell draggable" data-item-id="{{spell._id}}">
-							{{#if @root.flags.show-delete}}
-								<a class="delete-item" data-item-id="{{spell._id}}">
+							{{#if @root.canDelete}}
+								<a class="delete-item" data-tooltip="MOBLOKS5E.delete.tooltip" data-item-id="{{spell._id}}">
 									<i class="fa fa-trash"></i>
 								</a>
 							{{/if}}

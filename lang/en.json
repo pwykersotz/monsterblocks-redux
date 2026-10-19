@@ -170,8 +170,29 @@
 			}
 		},
 		"show-delete": {
-			"enable": "Enable delete",
-			"disable": "Disable delete"
+			"enable": "Always show delete buttons",
+			"disable": "Show delete buttons on hover only"
+		},
+		"confirm-delete": {
+			"settings": {
+				"name": "Confirm Before Deleting",
+				"hint": "Ask for confirmation before a feature, action or spell is deleted from a Monster Blocks sheet."
+			}
+		},
+		"delete": {
+			"tooltip": "Delete",
+			"title": "Delete {name}?",
+			"content": "This permanently removes {name} from {actor}.",
+			"yes": "Delete",
+			"no": "Cancel"
+		},
+		"attackMods": {
+			"label": "Attack modifiers:",
+			"toHit": "to hit",
+			"damage": "damage",
+			"mixed": "varies",
+			"toHitHint": "Added to every attack roll this creature makes, including spell attacks. Accepts numbers or dice, e.g. 2 or 1d4.",
+			"damageHint": "Added to the damage of every weapon and spell attack. Accepts numbers or dice, e.g. 2 or 1d6."
 		},
 		"show-bio": {
 			"enable": "Show biography",

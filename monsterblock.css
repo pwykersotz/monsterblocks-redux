@@ -1214,3 +1214,48 @@ li:nth-last-of-type(2):after {
 	text-indent: 0;
 	pointer-events: none;
 }
+
+/* Delete buttons: shown on hover while editing, or always with the "show-delete" toggle */
+.monsterblock section.item {
+	position: relative;
+}
+.monsterblock section.item > div > .delete-item {
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: auto;
+	z-index: 2;
+	padding: 0;
+}
+.monsterblock section.item > div > .delete-item:before {
+	display: none;
+}
+.monsterblock section.item > div > .delete-item i {
+	position: static;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	text-indent: 0;
+}
+.monsterblock .show-delete .delete-item {
+	visibility: visible;
+}
+
+/* Global attack modifiers */
+.monsterblock .attack-modifiers {
+	position: relative;
+	margin: .7em 0 .5em;
+	font-size: .9em;
+	opacity: .8;
+}
+.monsterblock .attack-modifiers-label {
+	font-weight: bold;
+	font-style: italic;
+}
+.monsterblock .attack-modifiers [contenteditable="true"]:empty {
+	min-width: 1.5em;
+}
+.monsterblock .attack-modifiers [contenteditable="true"]:empty::after {
+	content: attr(placeholder);
+	color: var(--faded-text);
+}

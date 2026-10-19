@@ -516,7 +516,7 @@ export default class CastingPreper extends ItemPreper {
 				items: this.atWillSpellsForList,
 				itemClass: "spell at-will-spell",
 				itemLabelClass: "spell-name",
-				deletable: this.sheet.flags["show-delete"] && this.editing  // When deletion and editing are both enabled
+				deletable: this.editing && this.sheet.actor.isOwner  // Trash icons appear on hover while editing
 			})
 		});
 	}
