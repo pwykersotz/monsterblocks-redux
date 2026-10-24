@@ -597,6 +597,10 @@ export default class MonsterBlock5e extends HandlebarsApplicationMixin(ActorShee
 
 		// Fonts, images and the window frame may still be settling on the first render, so fit again once they have.
 		requestAnimationFrame(() => this.fitToContent());
+		document.fonts?.ready?.then(() => this.fitToContent());
+		for (const img of this.element.querySelectorAll("img")) {
+			if (!img.complete) img.addEventListener("load", () => this.fitToContent(), { once: true });
+		}
 	}
 
 	/**

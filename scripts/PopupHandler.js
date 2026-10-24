@@ -85,26 +85,63 @@ export default class PopupHandler {
 		return `calc(var(--column-width) * ${columns} ${gap} + var(--window-padding) * 2)`;
 	}
 
+	/**
+	 * Number of columns the content currently spills into at the current width.
+	 *
+	 * @return {number}
+	 */
+	measureColumns() {
+		const baseWidth = this.container.getBoundingClientRect().width;
+		const gap = this.columnGap;
+		return Math.max(1, Math.ceil((this.layoutWidth + gap - 2) / (baseWidth + gap)));
+	}
+
 	fix() {
 		if (!this.container) return;
+		const style = this.container.style;
 
-		// Remove any scaling so that measurements are accurate.
+		// Remove any scaling and previously fixed column count so that measurements are accurate.
 		this.element.style.transform = "";
+		style.columnCount = "";
+		style.columnWidth = "";
+		style.height = "";
 
 		// Start with a single column at the maximum height, so the column layout overflows to the right.
 		this.element.style.width = this.getWidthCSSString(1);
 		this.element.style.height = `${this._height}px`;
 
-		const baseWidth = this.container.getBoundingClientRect().width;
+		// Never make the window wider than the screen; beyond that the sheet scrolls instead.
+		const oneColumn = this.computedWidth;
 		const gap = this.columnGap;
-		const columns = Math.max(1, Math.round((this.layoutWidth + gap) / (baseWidth + gap)));
+		const maxColumns = Math.max(1, Math.floor((window.innerWidth - 20 - oneColumn) / (oneColumn - this.padding * 2 + gap)) + 1);
 
-		// Width needs corrected first, so that the column layout will expand and balance correctly.
-		this.element.style.width = this.getWidthCSSString(columns);
-		const width = this.computedWidth;
+		let columns = Math.min(this.measureColumns(), maxColumns);
+
+		// Fix the column count explicitly. Relying on the browser to fit "as many columns as will fit"
+		// meant that rounding the window width down by a fraction of a pixel (or a scrollbar appearing)
+		// dropped a column, and the rest of the stat block was cut off at the bottom of the window.
+		const applyColumns = (n) => {
+			style.columnWidth = "auto";
+			style.columnCount = String(n);
+			// A few pixels of slack absorb rounding and thin scrollbars.
+			this.element.style.width = `calc(${this.getWidthCSSString(n)} + 4px)`;
+		};
+		applyColumns(columns);
+
+		// If the balanced columns still overflow the maximum height, add columns until everything fits.
+		const content = this.element.querySelector(".window-content") ?? this.container;
+		while (columns < maxColumns && content.scrollHeight > content.clientHeight + 1) applyColumns(++columns);
+
+		// At the column limit, let the columns grow taller and the window scroll, rather than hiding
+		// overflow columns off to the right.
+		style.height = "";
+		const overflowsSideways = () => this.layoutWidth > this.container.getBoundingClientRect().width + 2;
+		if (overflowsSideways()) style.height = "auto";
+
+		const width = Math.ceil(this.computedWidth);
 
 		// Once the layout is balanced, we can correct the height to match it.
-		const height = Math.ceil(this.layoutHeight + this.padding);
+		const height = Math.min(this._height, Math.ceil(this.layoutHeight + this.padding));
 		this.element.style.height = `${height}px`;
 
 		const position = { width, height };
